@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
 import { Package, Search, ShoppingBag, Star, X } from 'lucide-react';
-import { HERO_BANNER_IMAGE, HERO_TECH_BANNER_IMAGE } from '../data/products';
+import {
+  HERO_BANNER_IMAGE,
+  HERO_FESTIVE_BANNER_IMAGE_3,
+  HERO_TECH_BANNER_IMAGE,
+} from '../data/products';
 import type { Product } from '../types/store';
 import {
   calculateDiscountPercent,
   filterProducts,
-  formatCountdown,
   formatINRDecimal,
+  formatLiveSaleCountdown,
   getNextPingPongSlide,
   type CarouselPingPongState,
 } from '../utils/commerce';
@@ -45,6 +49,7 @@ interface BannerSlide {
   id: string;
   image: string;
   imageAlt: string;
+  showTextOverlay: boolean;
   badgeTop: string;
   badgeBottom: string;
   headlineLine1: string;
@@ -63,7 +68,8 @@ const BANNER_SLIDES: BannerSlide[] = [
     id: 'diwali-tech-deals',
     image: HERO_TECH_BANNER_IMAGE,
     imageAlt:
-      'Big Bang Diwali Sale Is Live featuring festive tech deals on laptops, wireless headphones, and tablets with glowing diyas and lanterns',
+      'Big Bang Diwali Sale Is Live Powered by Samsung Galaxy and Intel Core Ultra — Shop Festive Tech Deals Today',
+    showTextOverlay: false,
     badgeTop: 'BIG BANG',
     badgeBottom: 'DIWALI',
     headlineLine1: 'SALE',
@@ -72,13 +78,14 @@ const BANNER_SLIDES: BannerSlide[] = [
     subtitleLine2: 'TECH DEALS TODAY!',
     promoTag: 'DIWALI10 · 10% OFF',
     targetCategory: 'Electronics',
-    contentPaddingClass: 'pl-[38%] pr-[10%] pb-3 sm:pl-[40%] sm:pr-[14%] sm:pb-5',
+    contentPaddingClass: '',
   },
   {
     id: 'diwali-home-appliances',
     image: HERO_BANNER_IMAGE,
     imageAlt:
-      'Big Bang Diwali Sale Is Live featuring lowest prices guaranteed on home appliances, refrigerators, washing machines, and smart TVs',
+      'Big Bang Diwali Sale Is Live Powered by Samsung Galaxy and Intel Core Ultra — Lowest Prices Guaranteed on Home Appliances',
+    showTextOverlay: false,
     badgeTop: 'BIG BANG',
     badgeBottom: 'DIWALI',
     headlineLine1: 'SALE',
@@ -87,11 +94,27 @@ const BANNER_SLIDES: BannerSlide[] = [
     subtitleLine2: 'GUARANTEED*',
     promoTag: 'No-Cost UPI & COD',
     targetCategory: 'For You',
-    contentPaddingClass: 'pl-[43%] pr-[5%] pb-3 sm:pl-[46%] sm:pr-[10%] sm:pb-5',
+    contentPaddingClass: '',
+  },
+  {
+    id: 'diwali-festive-electronics',
+    image: HERO_FESTIVE_BANNER_IMAGE_3,
+    imageAlt:
+      'Big Bang Diwali Sale Is Live — Shop Festive Tech Deals Today on Laptops, Tablets, and Wireless Headphones',
+    showTextOverlay: false,
+    badgeTop: 'BIG BANG',
+    badgeBottom: 'DIWALI',
+    headlineLine1: 'SALE',
+    headlineLine2: 'IS LIVE',
+    subtitleLine1: 'SHOP FESTIVE',
+    subtitleLine2: 'TECH DEALS TODAY!',
+    promoTag: 'Festive Tech Deals',
+    targetCategory: 'Electronics',
+    contentPaddingClass: '',
   },
 ];
 
-const INITIAL_SALE_SECONDS = 9 * 60 + 27; // 09m 27s
+const INITIAL_SALE_SECONDS = 9 * 60 + 1; // 9min 01sec
 
 export function HomePage({
   products,
@@ -269,15 +292,6 @@ export function HomePage({
                     <X className="w-4 h-4" />
                   </button>
                 )}
-
-                {/* Decorative mobile Cart indicator inside right end of search bar (non-interactive) */}
-                <span
-                  aria-hidden="true"
-                  data-testid="search-bar-cart-icon"
-                  className="md:hidden relative ml-1.5 p-1.5 text-[#374151] rounded-lg select-none cursor-default shrink-0"
-                >
-                  <ShoppingBag className="w-[19px] h-[19px]" aria-hidden="true" />
-                </span>
               </div>
             </div>
           )}
@@ -349,13 +363,17 @@ export function HomePage({
             data-active-slide={activeSlide}
             onTouchStart={handleBannerTouchStart}
             onTouchEnd={handleBannerTouchEnd}
-            className="relative rounded-[18px] overflow-hidden aspect-[16/9] sm:aspect-auto sm:h-[310px] md:h-[335px] bg-[#9B111E] shadow-[0_4px_16px_rgba(153,27,27,0.18)] touch-pan-y select-none"
+            className="relative rounded-[18px] overflow-hidden aspect-[16/9] sm:aspect-auto sm:h-[360px] md:h-[400px] bg-[radial-gradient(ellipse_at_center,#E60A0E_0%,#C1070C_58%,#8E060C_100%)] shadow-[0_4px_16px_rgba(153,27,27,0.18)] touch-pan-y select-none"
           >
-            {/* Horizontal 2-Slide Track */}
+            {/* Horizontal 3-Slide Track */}
             <div
               data-testid="banner-track"
-              className={`flex w-[200%] h-full transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
-                activeSlide === 0 ? 'translate-x-0' : '-translate-x-1/2'
+              className={`flex w-[300%] h-full transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+                activeSlide === 0
+                  ? 'translate-x-0'
+                  : activeSlide === 1
+                    ? '-translate-x-1/3'
+                    : '-translate-x-2/3'
               }`}
             >
               {BANNER_SLIDES.map((slide, idx) => {
@@ -367,25 +385,33 @@ export function HomePage({
                     key={slide.id}
                     data-testid={`banner-slide-${idx}`}
                     aria-hidden={!isCurrent}
-                    className="relative w-1/2 h-full shrink-0 overflow-hidden"
+                    className="relative w-1/3 h-full shrink-0 overflow-hidden"
                   >
                     <SmartImage
                       src={slide.image}
                       alt={slide.imageAlt}
                       fallbackTitle={`${slide.badgeTop} ${slide.badgeBottom} ${slide.headlineLine1} ${slide.headlineLine2}`}
-                      className="w-full h-full object-cover object-left sm:object-center pointer-events-none"
+                      className={`h-full pointer-events-none ${
+                        slide.showTextOverlay
+                          ? 'w-full object-cover object-left sm:object-center'
+                          : 'w-full object-cover object-center sm:w-auto sm:max-w-full sm:mx-auto sm:object-contain sm:[mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]'
+                      }`}
                     />
 
-                    {/* Subtle crimson vignette over the right-center stage for crisp festive lettering */}
-                    <div
-                      aria-hidden="true"
-                      className="absolute inset-0 bg-gradient-to-r from-black/5 via-[#9B111E]/38 to-[#7A0912]/52"
-                    />
+                    {slide.showTextOverlay && (
+                      <>
+                        {/* Subtle crimson vignette over the right-center stage for crisp festive lettering */}
+                        <div
+                          aria-hidden="true"
+                          className="absolute inset-0 bg-gradient-to-r from-black/5 via-[#9B111E]/38 to-[#7A0912]/52"
+                        />
 
-                    {/* Top-right compact festive promo badge */}
-                    <div className="absolute top-2 right-2.5 sm:top-3.5 sm:right-4 bg-white/95 backdrop-blur-xs text-[#111827] px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md shadow-xs text-[9.5px] sm:text-xs font-semibold tracking-tight">
-                      {slide.promoTag}
-                    </div>
+                        {/* Top-right compact festive promo badge */}
+                        <div className="absolute top-2 right-2.5 sm:top-3.5 sm:right-4 bg-white/95 backdrop-blur-xs text-[#111827] px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md shadow-xs text-[9.5px] sm:text-xs font-semibold tracking-tight">
+                          {slide.promoTag}
+                        </div>
+                      </>
+                    )}
 
                     {/* Interactive Banner Content Overlay */}
                     <button
@@ -401,34 +427,36 @@ export function HomePage({
                       className={`absolute inset-0 w-full h-full flex items-center justify-center text-center cursor-pointer ${slide.contentPaddingClass}`}
                       aria-label={`${slide.badgeTop} ${slide.badgeBottom} ${slide.headlineLine1} ${slide.headlineLine2} - ${slide.subtitleLine1} ${slide.subtitleLine2}`}
                     >
-                      <div className="flex flex-col items-center max-w-[215px] sm:max-w-[370px]">
-                        {/* Festive Diwali Starburst Badge */}
-                        <div className="inline-flex flex-col items-center leading-none mb-1.5 sm:mb-2">
-                          <span className="font-display font-black text-[12px] sm:text-[18px] tracking-tight text-[#FFE44D] drop-shadow-[0_2px_0_rgba(30,58,138,0.95)]">
-                            {slide.badgeTop}
-                          </span>
-                          <span className="font-display font-extrabold text-[10px] sm:text-[14px] tracking-wider text-white bg-[#1D4ED8] px-2 py-0.5 rounded-xs shadow-xs -mt-0.5">
-                            {slide.badgeBottom}
-                          </span>
+                      {slide.showTextOverlay && (
+                        <div className="flex flex-col items-center max-w-[215px] sm:max-w-[370px]">
+                          {/* Festive Diwali Starburst Badge */}
+                          <div className="inline-flex flex-col items-center leading-none mb-1.5 sm:mb-2">
+                            <span className="font-display font-black text-[12px] sm:text-[18px] tracking-tight text-[#FFE44D] drop-shadow-[0_2px_0_rgba(30,58,138,0.95)]">
+                              {slide.badgeTop}
+                            </span>
+                            <span className="font-display font-extrabold text-[10px] sm:text-[14px] tracking-wider text-white bg-[#1D4ED8] px-2 py-0.5 rounded-xs shadow-xs -mt-0.5">
+                              {slide.badgeBottom}
+                            </span>
+                          </div>
+
+                          {/* Gleaming Gold Main Headline */}
+                          <HeadlineTag className="font-display font-black uppercase leading-[0.94] tracking-tight text-[26px] sm:text-[42px] md:text-[48px] drop-shadow-[0_3px_6px_rgba(69,10,10,0.88)]">
+                            <span className="block bg-gradient-to-b from-[#FFF9CC] via-[#FFD43B] to-[#DE8910] bg-clip-text text-transparent">
+                              {slide.headlineLine1}
+                            </span>
+                            <span className="block bg-gradient-to-b from-[#FFF9CC] via-[#FFD43B] to-[#DE8910] bg-clip-text text-transparent">
+                              {slide.headlineLine2}
+                            </span>
+                          </HeadlineTag>
+
+                          {/* Crisp White Subtitle */}
+                          <p className="mt-1.5 sm:mt-2 text-[9.5px] sm:text-[14px] font-bold tracking-wider uppercase text-white leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
+                            {slide.subtitleLine1}
+                            <br />
+                            {slide.subtitleLine2}
+                          </p>
                         </div>
-
-                        {/* Gleaming Gold Main Headline */}
-                        <HeadlineTag className="font-display font-black uppercase leading-[0.94] tracking-tight text-[26px] sm:text-[42px] md:text-[48px] drop-shadow-[0_3px_6px_rgba(69,10,10,0.88)]">
-                          <span className="block bg-gradient-to-b from-[#FFF9CC] via-[#FFD43B] to-[#DE8910] bg-clip-text text-transparent">
-                            {slide.headlineLine1}
-                          </span>
-                          <span className="block bg-gradient-to-b from-[#FFF9CC] via-[#FFD43B] to-[#DE8910] bg-clip-text text-transparent">
-                            {slide.headlineLine2}
-                          </span>
-                        </HeadlineTag>
-
-                        {/* Crisp White Subtitle */}
-                        <p className="mt-1.5 sm:mt-2 text-[9.5px] sm:text-[14px] font-bold tracking-wider uppercase text-white leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
-                          {slide.subtitleLine1}
-                          <br />
-                          {slide.subtitleLine2}
-                        </p>
-                      </div>
+                      )}
                     </button>
                   </div>
                 );
@@ -466,7 +494,7 @@ export function HomePage({
         {/* Live Sale Countdown Strip */}
         <section
           aria-label="Live Sale Countdown"
-          className="bg-white py-3.5 sm:py-3.5 text-center border-b border-[#E6E8EC] shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
+          className="bg-white py-3 sm:py-3.5 text-center border-b border-[#E6E8EC] shadow-[0_1px_2px_rgba(15,23,42,0.03)]"
         >
           <p className="font-display text-[21px] sm:text-[24px] font-bold tracking-tight text-[#1F2937] leading-none">
             <span>Live Sale : </span>
@@ -474,8 +502,19 @@ export function HomePage({
               data-testid="live-sale-timer"
               className="text-[#EA580C] tabular-nums"
             >
-              {formatCountdown(secondsLeft)}
+              {formatLiveSaleCountdown(secondsLeft)}
             </span>
+          </p>
+          <p
+            data-testid="live-sale-watchers"
+            className="mt-1.5 inline-flex items-center justify-center gap-1.5 text-[11.5px] sm:text-[13px] font-semibold text-[#16A34A] tracking-tight leading-none"
+          >
+            <span
+              aria-hidden="true"
+              data-testid="live-sale-dot"
+              className="inline-block w-[7px] h-[7px] sm:w-2 sm:h-2 rounded-full bg-[#16A34A] animate-live-blink shrink-0"
+            />
+            <span>146,954 People watching this sale</span>
           </p>
         </section>
 
@@ -527,7 +566,7 @@ export function HomePage({
           ) : (
             <div
               data-testid="product-grid"
-              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-2 gap-y-2.5 sm:gap-3.5 px-2 sm:px-0"
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-1 gap-y-2.5 sm:gap-x-2 sm:gap-y-3.5 px-1 sm:px-0"
             >
               {filtered.map((product) => {
                 const primaryVariant = product.variants[0];
@@ -548,7 +587,7 @@ export function HomePage({
                       className="w-full flex-1 flex flex-col text-left bg-white cursor-pointer group focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#2874F0]"
                     >
                       {/* Clean Square Studio / Lifestyle Image with crisp white border frame */}
-                      <div className="w-full aspect-square bg-white p-2 sm:p-2.5 flex items-center justify-center overflow-hidden">
+                      <div className="w-full aspect-square bg-white p-1 sm:p-1.5 flex items-center justify-center overflow-hidden">
                         <SmartImage
                           src={product.image}
                           alt={product.name}

@@ -20,7 +20,6 @@ import {
   generateOrderId,
   validateAddress,
 } from '../utils/commerce';
-import { OrderSuccessFlow } from './OrderSuccessFlow';
 import { PaymentStepView, type QuickUpiApp } from './PaymentStepView';
 import { SmartImage } from './SmartImage';
 import { AssuredBadge } from './StoreIcons';
@@ -96,13 +95,16 @@ export function CheckoutPage({
 
   const [selectedUpiApp, setSelectedUpiApp] = useState<QuickUpiApp>('phonepe');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [confirmedOrder, setConfirmedOrder] = useState<Order | null>(null);
 
   useEffect(() => {
-    if (step > 1 && !confirmedOrder && Object.keys(validateAddress(address)).length > 0) {
+    setAddress(initialAddress);
+  }, [initialAddress]);
+
+  useEffect(() => {
+    if (step > 1 && Object.keys(validateAddress(address)).length > 0) {
       onReplaceToAddress();
     }
-  }, [step, confirmedOrder, address, onReplaceToAddress]);
+  }, [step, address, onReplaceToAddress]);
 
   const pincodeHint =
     address.pincode.length === 6 ? checkPincodeDelivery(address.pincode) : null;
@@ -145,21 +147,10 @@ export function CheckoutPage({
       };
 
       setIsProcessing(false);
-      setConfirmedOrder(newOrder);
       onOrderComplete(newOrder);
       window.scrollTo(0, 0);
     }, 650);
   };
-
-  // Post-Order Tick Animation -> "Thanks for shopping with us!" View
-  if (confirmedOrder) {
-    return (
-      <OrderSuccessFlow
-        order={confirmedOrder}
-        onContinueShopping={onBackToStore}
-      />
-    );
-  }
 
   // Guard empty cart on checkout
   if (items.length === 0) {
@@ -480,19 +471,39 @@ export function CheckoutPage({
                 </button>
               </div>
               <div className="mt-1.5 text-[14.5px] text-[#111827] leading-snug space-y-0.5">
-                {address.fullName && <p className="font-medium">{address.fullName}</p>}
-                <p>
-                  {[
+                {(() => {
+                  const fullName = address.fullName.trim();
+                  const phone = address.phone.trim();
+                  const addrParts = [
                     address.addressLine1,
                     address.addressLine2,
                     address.city,
                     address.state,
                   ]
+                    .map((p) => p.trim())
                     .filter(Boolean)
-                    .join(', ')}
-                  {address.pincode ? ` - ${address.pincode}` : ''}
-                </p>
-                {address.phone && <p className="pt-0.5">{address.phone}</p>}
+                    .join(', ');
+                  const addrText = addrParts
+                    ? `${addrParts}${address.pincode.trim() ? ` - ${address.pincode.trim()}` : ''}`
+                    : address.pincode.trim();
+
+                  if (!fullName && !addrText && !phone) {
+                    return (
+                      <>
+                        <p className="font-medium">Customer</p>
+                        <p className="text-[#6B7280]">Address not available</p>
+                      </>
+                    );
+                  }
+
+                  return (
+                    <>
+                      {fullName && <p className="font-medium">{fullName}</p>}
+                      {addrText && <p>{addrText}</p>}
+                      {phone && <p className="pt-0.5">{phone}</p>}
+                    </>
+                  );
+                })()}
               </div>
             </section>
 

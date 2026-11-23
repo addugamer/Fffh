@@ -182,4 +182,5 @@ export type AppRoute =
   | { view: 'home' }
   | { view: 'product'; productId: string }
   | { view: 'checkout'; step?: CheckoutStep }
+  | { view: 'order-success' }
   | { view: 'orders'; highlightOrderId?: string };

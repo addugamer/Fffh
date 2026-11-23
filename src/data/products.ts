@@ -2,8 +2,10 @@ import type { Coupon, Product } from '../types/store';
 import { FEATURED_SCREENSHOT_PRODUCTS } from './featuredProducts';
 
 export const HERO_TECH_BANNER_IMAGE =
-  '/src/assets/images/banner_diwali_tech_deals_1795187248725.jpg';
-export const HERO_BANNER_IMAGE = '/src/assets/images/banner_diwali_live_sale_1795180839062.jpg';
+  '/assets/aistudio/file_000000001d7c81fa9bcb742d3761c7fa_579b887c.png';
+export const HERO_BANNER_IMAGE = '/assets/aistudio/IMG_20261123_151749_8c45c43e.png';
+export const HERO_FESTIVE_BANNER_IMAGE_3 =
+  '/assets/aistudio/file_00000000735482118737b5f25426a3c9_0a0d8fb4.png';
 export const HERO_IMAGE = HERO_TECH_BANNER_IMAGE;
 
 export const AVAILABLE_COUPONS: Coupon[] = [

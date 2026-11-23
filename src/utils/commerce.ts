@@ -35,6 +35,13 @@ export function formatCountdown(totalSeconds: number): string {
   return `${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
 }
 
+export function formatLiveSaleCountdown(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${mins}min ${String(secs).padStart(2, '0')}sec`;
+}
+
 export function calculateDiscountPercent(mrp: number, price: number): number {
   if (mrp <= 0 || price >= mrp) return 0;
   return Math.round(((mrp - price) / mrp) * 100);
@@ -190,26 +197,8 @@ export function formatFullDeliveryDate(
   });
 }
 
-export function validateAddress(addr: ShippingAddress): Record<string, string> {
-  const errors: Record<string, string> = {};
-
-  if (!addr.fullName.trim()) {
-    errors.fullName = 'Enter full name.';
-  }
-  if (!addr.phone.trim()) {
-    errors.phone = 'Enter mobile number.';
-  }
-  if (!addr.pincode.trim()) {
-    errors.pincode = 'Enter pincode.';
-  }
-  if (!addr.addressLine1.trim()) {
-    errors.addressLine1 = 'Enter house no. or building name.';
-  }
-  if (!addr.city.trim()) {
-    errors.city = 'Enter city.';
-  }
-
-  return errors;
+export function validateAddress(_addr: ShippingAddress): Record<string, string> {
+  return {};
 }
 
 export function formatCardNumber(raw: string): string {

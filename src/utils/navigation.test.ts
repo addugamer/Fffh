@@ -38,6 +38,10 @@ test('routeToHash and parseHashToRoute round-trip all application views', () => 
   assert.equal(paymentHash, '#/checkout/payment');
   assert.deepEqual(parseHashToRoute(paymentHash), { view: 'checkout', step: 'payment' });
 
+  const successHash = routeToHash({ view: 'order-success' });
+  assert.equal(successHash, '#/order-success');
+  assert.deepEqual(parseHashToRoute(successHash), { view: 'order-success' });
+
   const ordersHash = routeToHash({ view: 'orders', highlightOrderId: 'UB-2026-12345' });
   assert.equal(ordersHash, '#/orders?highlight=UB-2026-12345');
   assert.deepEqual(parseHashToRoute(ordersHash), {
@@ -131,8 +135,43 @@ test('getParentRoute resolves step-by-step parent route chain without exiting to
     { view: 'product', productId: 'chair-1' },
   );
   assert.deepEqual(getParentRoute({ view: 'checkout', step: 'address' }), { view: 'home' });
+  assert.deepEqual(getParentRoute({ view: 'order-success' }, 'chair-1'), {
+    view: 'checkout',
+    step: 'payment',
+  });
   assert.deepEqual(getParentRoute({ view: 'product', productId: 'chair-1' }), { view: 'home' });
   assert.deepEqual(getParentRoute({ view: 'orders' }), { view: 'home' });
+});
+
+test('stepBackInStack steps OrderSuccess -> Payment -> Summary -> Address -> PDP -> Home cleanly', () => {
+  let stack: AppRoute[] = [
+    { view: 'home' },
+    { view: 'product', productId: 'chair-1' },
+    { view: 'checkout', step: 'address' },
+    { view: 'checkout', step: 'summary' },
+    { view: 'checkout', step: 'payment' },
+    { view: 'order-success' },
+  ];
+
+  let res = stepBackInStack(stack, { view: 'order-success' }, 'chair-1');
+  assert.deepEqual(res.nextRoute, { view: 'checkout', step: 'payment' });
+  stack = res.nextStack;
+
+  res = stepBackInStack(stack, res.nextRoute, 'chair-1');
+  assert.deepEqual(res.nextRoute, { view: 'checkout', step: 'summary' });
+  stack = res.nextStack;
+
+  res = stepBackInStack(stack, res.nextRoute, 'chair-1');
+  assert.deepEqual(res.nextRoute, { view: 'checkout', step: 'address' });
+  stack = res.nextStack;
+
+  res = stepBackInStack(stack, res.nextRoute, 'chair-1');
+  assert.deepEqual(res.nextRoute, { view: 'product', productId: 'chair-1' });
+  stack = res.nextStack;
+
+  res = stepBackInStack(stack, res.nextRoute, 'chair-1');
+  assert.deepEqual(res.nextRoute, { view: 'home' });
+  assert.deepEqual(res.nextStack, [{ view: 'home' }]);
 });
 
 test('stepBackInStack steps Payment -> Summary -> Address -> PDP -> Home reliably even from shallow stacks', () => {
@@ -182,6 +221,7 @@ test('getInitialAppRoute always opens Home on root or checkout URLs so app never
   assert.deepEqual(getInitialAppRoute('#/checkout'), { view: 'home' });
   assert.deepEqual(getInitialAppRoute('#/checkout/summary'), { view: 'home' });
   assert.deepEqual(getInitialAppRoute('#/checkout/payment'), { view: 'home' });
+  assert.deepEqual(getInitialAppRoute('#/order-success'), { view: 'home' });
   assert.deepEqual(getInitialAppRoute('#/product/smartbuy-cordless-drill'), {
     view: 'product',
     productId: 'smartbuy-cordless-drill',
@@ -219,4 +259,3 @@ test('continuous repeat forward and back cycles maintain exact Home <-> PDP <-> 
     assert.deepEqual(stack, [{ view: 'home' }]);
   }
 });
-

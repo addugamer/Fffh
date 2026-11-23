@@ -35,6 +35,8 @@ export function routeToHash(route: AppRoute): string {
       const step = normalizeCheckoutStep(route.step);
       return step === 'address' ? '#/checkout' : `#/checkout/${step}`;
     }
+    case 'order-success':
+      return '#/order-success';
     case 'orders':
       return route.highlightOrderId
         ? `#/orders?highlight=${encodeURIComponent(route.highlightOrderId)}`
@@ -67,6 +69,9 @@ export function parseHashToRoute(rawHash: string): AppRoute {
   if (normalizedPath === '/checkout/payment') {
     return { view: 'checkout', step: 'payment' };
   }
+  if (normalizedPath === '/order-success') {
+    return { view: 'order-success' };
+  }
 
   if (normalizedPath === '/orders') {
     const params = new URLSearchParams(queryPart);
@@ -89,7 +94,7 @@ export function isHistoryNavEntry(state: unknown): state is HistoryNavEntry {
 }
 
 /**
- * Pure stack helpers for deterministic navigation stack modeling & testing.
+ * Pure stack helpers for deterministic SPA navigation stack modeling & testing.
  */
 export function pushRouteStack(stack: AppRoute[], next: AppRoute): AppRoute[] {
   if (next.view === 'home') {
@@ -123,6 +128,9 @@ export function getParentRoute(current: AppRoute, lastProductId?: string): AppRo
     }
     return { view: 'home' };
   }
+  if (current.view === 'order-success') {
+    return { view: 'checkout', step: 'payment' };
+  }
   if (current.view === 'product' || current.view === 'orders') {
     return { view: 'home' };
   }
@@ -150,7 +158,7 @@ export function stepBackInStack(
 
 export function getInitialAppRoute(rawHash: string): AppRoute {
   const parsed = parseHashToRoute(rawHash);
-  if (parsed.view === 'checkout') {
+  if (parsed.view === 'checkout' || parsed.view === 'order-success') {
     return { view: 'home' };
   }
   return parsed;

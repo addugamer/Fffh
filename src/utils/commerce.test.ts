@@ -13,6 +13,7 @@ import {
   formatFullDeliveryDate,
   formatINR,
   formatINRDecimal,
+  formatLiveSaleCountdown,
   generateOrderId,
   getNextPingPongSlide,
   getProductGalleryImages,
@@ -45,6 +46,14 @@ test('formatCountdown formats live sale timer as MMm SSs', () => {
   assert.equal(formatCountdown(65), '01m 05s');
   assert.equal(formatCountdown(0), '00m 00s');
   assert.equal(formatCountdown(-10), '00m 00s');
+});
+
+test('formatLiveSaleCountdown formats home banner timer as Nmin SSsec', () => {
+  assert.equal(formatLiveSaleCountdown(541), '9min 01sec');
+  assert.equal(formatLiveSaleCountdown(567), '9min 27sec');
+  assert.equal(formatLiveSaleCountdown(605), '10min 05sec');
+  assert.equal(formatLiveSaleCountdown(0), '0min 00sec');
+  assert.equal(formatLiveSaleCountdown(-5), '0min 00sec');
 });
 
 test('calculateDiscountPercent returns accurate percentage savings', () => {
@@ -133,7 +142,7 @@ test('checkPincodeDelivery validates Indian pincodes and returns estimated dates
   assert.equal(formatFullDeliveryDate(3, new Date('2026-11-20T12:00:00Z')), 'Mon, Nov 23, 2026');
 });
 
-test('validateAddress rejects empty fields and accepts any entered address values', () => {
+test('validateAddress allows proceeding even when all fields are completely empty', () => {
   const emptyErrors = validateAddress({
     fullName: '',
     phone: '',
@@ -144,24 +153,31 @@ test('validateAddress rejects empty fields and accepts any entered address value
     state: '',
     addressType: 'Home',
   });
-  assert.ok(emptyErrors.fullName);
-  assert.ok(emptyErrors.phone);
-  assert.ok(emptyErrors.pincode);
-  assert.ok(emptyErrors.addressLine1);
-  assert.ok(emptyErrors.city);
+  assert.deepEqual(emptyErrors, {});
 
-  // Casual / short / arbitrary address values should all be accepted
-  const casualErrors = validateAddress({
-    fullName: 'A',
-    phone: '12345',
-    pincode: '000',
-    addressLine1: '12',
+  const singleWordErrors = validateAddress({
+    fullName: 'Rahul',
+    phone: '',
+    pincode: '',
+    addressLine1: '',
     addressLine2: '',
-    city: 'X',
+    city: '',
     state: '',
     addressType: 'Home',
   });
-  assert.deepEqual(casualErrors, {});
+  assert.deepEqual(singleWordErrors, {});
+
+  const nameOnlyValid = validateAddress({
+    fullName: 'Rahul Sharma',
+    phone: '',
+    pincode: '',
+    addressLine1: '',
+    addressLine2: '',
+    city: '',
+    state: '',
+    addressType: 'Home',
+  });
+  assert.deepEqual(nameOnlyValid, {});
 
   const validErrors = validateAddress({
     fullName: 'Aarav Patel',
@@ -274,6 +290,16 @@ test('getNextPingPongSlide alternates left (0->1) then right (1->0) continuously
 
   const s4 = getNextPingPongSlide(s3.index, s3.direction, 2);
   assert.deepEqual(s4, { index: 0, direction: 1 });
+
+  // 3-banner ping-pong progression: 0 -> 1 -> 2 -> 1 -> 0
+  const t1 = getNextPingPongSlide(0, 1, 3);
+  assert.deepEqual(t1, { index: 1, direction: 1 });
+  const t2 = getNextPingPongSlide(t1.index, t1.direction, 3);
+  assert.deepEqual(t2, { index: 2, direction: -1 });
+  const t3 = getNextPingPongSlide(t2.index, t2.direction, 3);
+  assert.deepEqual(t3, { index: 1, direction: -1 });
+  const t4 = getNextPingPongSlide(t3.index, t3.direction, 3);
+  assert.deepEqual(t4, { index: 0, direction: 1 });
 
   // Single-slide edge case stays safely at 0
   assert.deepEqual(getNextPingPongSlide(0, 1, 1), { index: 0, direction: 1 });

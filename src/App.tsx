@@ -3,6 +3,7 @@ import { CartDrawer } from './components/CartDrawer';
 import { CheckoutPage } from './components/CheckoutPage';
 import { Header } from './components/Header';
 import { HomePage } from './components/HomePage';
+import { OrderSuccessFlow } from './components/OrderSuccessFlow';
 import { OrdersPage } from './components/OrdersPage';
 import { ProductDetailPage } from './components/ProductDetailPage';
 import { PRODUCTS } from './data/products';
@@ -11,6 +12,7 @@ import type {
   CartItem,
   CheckoutStep,
   Order,
+  PriceBreakdown,
   Product,
   ProductReview,
   ProductVariant,
@@ -19,7 +21,6 @@ import type {
 import { calculatePriceBreakdown, validateCoupon } from './utils/commerce';
 import {
   getInitialAppRoute,
-  getParentRoute,
   isHistoryNavEntry,
   isSameRoute,
   parseHashToRoute,
@@ -31,8 +32,8 @@ import {
 
 const STORAGE_CART_KEY = 'utsavbazaar_cart_v1';
 const STORAGE_ORDERS_KEY = 'utsavbazaar_orders_v1';
-const STORAGE_LAST_PRODUCT_KEY = 'utsavbazaar_last_product_v1';
-const STORAGE_NAV_STACK_KEY = 'utsavbazaar_nav_stack_v1';
+const STORAGE_COUPON_KEY = 'utsavbazaar_coupon_v1';
+const STORAGE_REVIEWS_KEY = 'utsavbazaar_reviews_v1';
 const LEGACY_STORAGE_ADDRESS_KEY = 'utsavbazaar_address_v1';
 
 const EMPTY_ADDRESS: ShippingAddress = {
@@ -46,7 +47,7 @@ const EMPTY_ADDRESS: ShippingAddress = {
   addressType: 'Home',
 };
 
-function readStorage<T>(key: string, fallback: T): T {
+function readLocalStorage<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return fallback;
@@ -56,450 +57,336 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
-export default function App() {
-  const [products, setProducts] = useState<Product[]>(PRODUCTS);
-  const [route, setRoute] = useState<AppRoute>(() =>
-    typeof window !== 'undefined' ? getInitialAppRoute(window.location.hash) : { view: 'home' },
-  );
-  const [routeStack, setRouteStack] = useState<AppRoute[]>(() => {
-    if (typeof window === 'undefined') return [{ view: 'home' }];
-    const initial = getInitialAppRoute(window.location.hash);
-    if (initial.view === 'home') {
-      return [{ view: 'home' }];
-    }
-    try {
-      const raw = window.sessionStorage.getItem(STORAGE_NAV_STACK_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as AppRoute[];
-        if (
-          Array.isArray(parsed) &&
-          parsed.length > 0 &&
-          isSameRoute(parsed[parsed.length - 1], initial)
-        ) {
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return [initial];
+function writeLocalStorage(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function hydrateProductsWithStoredReviews(): Product[] {
+  if (typeof window === 'undefined') return PRODUCTS;
+  const extraReviewsMap = readLocalStorage<Record<string, ProductReview[]>>(STORAGE_REVIEWS_KEY, {});
+  return PRODUCTS.map((prod) => {
+    const added = extraReviewsMap[prod.id];
+    if (!added || added.length === 0) return prod;
+    const nextReviews = [...added, ...prod.reviews];
+    const nextCount = prod.reviewCount + added.length;
+    const avg = nextReviews.reduce((sum, r) => sum + r.rating, 0) / nextReviews.length;
+    return {
+      ...prod,
+      reviews: nextReviews,
+      reviewCount: nextCount,
+      rating: Math.round(avg * 10) / 10,
+    };
   });
+}
+
+function resolveInitialSpaRoute(): AppRoute {
+  if (typeof window === 'undefined') return { view: 'home' };
+  return getInitialAppRoute(window.location.hash);
+}
+
+function getTitleForRoute(route: AppRoute, activeProductName?: string): string {
+  switch (route.view) {
+    case 'product':
+      return activeProductName ? `${activeProductName} — UtsavBazaar` : 'Product Details — UtsavBazaar';
+    case 'checkout':
+      if (route.step === 'summary') return 'Order Summary — UtsavBazaar';
+      if (route.step === 'payment') return 'Payments — UtsavBazaar';
+      return 'Add Delivery Address — UtsavBazaar';
+    case 'order-success':
+      return 'Order Confirmed — UtsavBazaar';
+    case 'orders':
+      return 'My Orders — UtsavBazaar';
+    case 'home':
+    default:
+      return 'UtsavBazaar — Festive Deals & Curated Essentials';
+  }
+}
+
+export default function App() {
+  const [products, setProducts] = useState<Product[]>(hydrateProductsWithStoredReviews);
+  const [route, setRoute] = useState<AppRoute>(resolveInitialSpaRoute);
   const [activeCategory, setActiveCategory] = useState<string>('For You');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const [cartItems, setCartItems] = useState<CartItem[]>(() =>
-    readStorage<CartItem[]>(STORAGE_CART_KEY, []),
+    readLocalStorage<CartItem[]>(STORAGE_CART_KEY, []),
   );
   const [orders, setOrders] = useState<Order[]>(() =>
-    readStorage<Order[]>(STORAGE_ORDERS_KEY, []),
+    readLocalStorage<Order[]>(STORAGE_ORDERS_KEY, []),
   );
   const [checkoutAddress, setCheckoutAddress] = useState<ShippingAddress>(EMPTY_ADDRESS);
+  const [latestOrder, setLatestOrder] = useState<Order | null>(null);
+  const [lastCheckoutSnapshot, setLastCheckoutSnapshot] = useState<{
+    items: CartItem[];
+    pricing: PriceBreakdown;
+    address: ShippingAddress;
+  } | null>(null);
 
   const [cartOpen, setCartOpen] = useState(false);
-  const [couponCode, setCouponCode] = useState('');
+  const [couponCode, setCouponCode] = useState<string>(() =>
+    readLocalStorage<string>(STORAGE_COUPON_KEY, ''),
+  );
   const [couponFeedback, setCouponFeedback] = useState<{
     valid: boolean;
     message: string;
   } | null>(null);
 
-  const historyDepthRef = useRef<number>(0);
-  const sessionHistoryDepthRef = useRef<number>(0);
-  const lastBackActionAtRef = useRef<number>(0);
   const routeRef = useRef<AppRoute>(route);
-  const routeStackRef = useRef<AppRoute[]>(routeStack);
-  const cartOpenRef = useRef<boolean>(cartOpen);
-  const cartItemsRef = useRef<CartItem[]>(cartItems);
-  const lastProductIdRef = useRef<string | undefined>(
-    (() => {
-      if (typeof window === 'undefined') return undefined;
-      try {
-        const fromSession = window.sessionStorage.getItem(STORAGE_LAST_PRODUCT_KEY);
-        if (fromSession) return fromSession;
-        const fromLocal = window.localStorage.getItem(STORAGE_LAST_PRODUCT_KEY);
-        if (fromLocal) return fromLocal;
-      } catch {
-        // ignore
-      }
-      return undefined;
-    })(),
+  const routeStackRef = useRef<AppRoute[]>(
+    route.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, route],
   );
-
-  const persistLastProductId = useCallback((productId: string) => {
-    lastProductIdRef.current = productId;
-    try {
-      window.sessionStorage.setItem(STORAGE_LAST_PRODUCT_KEY, productId);
-      window.localStorage.setItem(STORAGE_LAST_PRODUCT_KEY, productId);
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
-
-  const persistRouteStack = useCallback((nextStack: AppRoute[]) => {
-    routeStackRef.current = nextStack;
-    setRouteStack(nextStack);
-    try {
-      window.sessionStorage.setItem(STORAGE_NAV_STACK_KEY, JSON.stringify(nextStack));
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
-
-  useEffect(() => {
-    routeRef.current = route;
-    if (route.view === 'product') {
-      persistLastProductId(route.productId);
-    }
-  }, [route, persistLastProductId]);
+  const historyDepthRef = useRef<number>(0);
+  const ignoreNextPopCountRef = useRef<number>(0);
+  const popCleanupTimerRef = useRef<number | null>(null);
+  const lastProductIdRef = useRef<string | undefined>(
+    route.view === 'product' ? route.productId : undefined,
+  );
+  const checkoutOriginRef = useRef<'pdp' | 'cart'>('pdp');
+  const cartItemsRef = useRef<CartItem[]>(cartItems);
+  const cartOpenRef = useRef<boolean>(cartOpen);
 
   useEffect(() => {
     cartOpenRef.current = cartOpen;
   }, [cartOpen]);
 
   useEffect(() => {
+    routeRef.current = route;
+    if (route.view === 'product') {
+      lastProductIdRef.current = route.productId;
+    }
+    const prod =
+      route.view === 'product'
+        ? products.find((p) => p.id === route.productId)
+        : undefined;
+    document.title = getTitleForRoute(route, prod?.name);
+  }, [route, products]);
+
+  useEffect(() => {
     cartItemsRef.current = cartItems;
     if (!lastProductIdRef.current && cartItems.length > 0) {
-      persistLastProductId(cartItems[0].productId);
+      lastProductIdRef.current = cartItems[0].productId;
     }
-  }, [cartItems, persistLastProductId]);
+  }, [cartItems]);
 
-  // Initialize base history entry and listen for hardware/browser Back & Forward (popstate)
+  // Clear legacy prefill address and initialize instant SPA history navigation
   useEffect(() => {
     try {
       window.localStorage.removeItem(LEGACY_STORAGE_ADDRESS_KEY);
     } catch {
-      // ignore storage errors
+      // ignore
     }
-    const initialRoute = getInitialAppRoute(window.location.hash);
-    const baseEntry: HistoryNavEntry = {
+
+    const initial = routeRef.current;
+    const initialEntry: HistoryNavEntry = {
       appHistory: true,
-      route: initialRoute,
+      route: initial,
       cartOpen: false,
       depth: 0,
     };
-    historyDepthRef.current = 0;
-    sessionHistoryDepthRef.current = 0;
-    routeRef.current = initialRoute;
-    cartOpenRef.current = false;
-    setRoute(initialRoute);
-    setCartOpen(false);
-    if (initialRoute.view === 'home') {
-      persistRouteStack([{ view: 'home' }]);
-    }
-    window.history.replaceState(baseEntry, '', routeToHash(initialRoute));
+    window.history.replaceState(initialEntry, '', routeToHash(initial));
 
     const handlePopState = (event: PopStateEvent) => {
-      const wasCartOpen = cartOpenRef.current;
-
-      if (isHistoryNavEntry(event.state)) {
-        const prevDepth = historyDepthRef.current;
-        const delta = event.state.depth - prevDepth;
-        historyDepthRef.current = event.state.depth;
-        sessionHistoryDepthRef.current = Math.max(0, sessionHistoryDepthRef.current + delta);
-
-        // If CartDrawer was open and user pressed Back, just close the CartDrawer without altering the page stack.
-        if (wasCartOpen && !event.state.cartOpen) {
-          cartOpenRef.current = false;
-          setCartOpen(false);
-          return;
+      if (ignoreNextPopCountRef.current > 0) {
+        ignoreNextPopCountRef.current -= 1;
+        if (ignoreNextPopCountRef.current === 0 && popCleanupTimerRef.current !== null) {
+          window.clearTimeout(popCleanupTimerRef.current);
+          popCleanupTimerRef.current = null;
         }
-
-        const isBackward = delta < 0;
-        if (isBackward && !event.state.cartOpen) {
-          const effectiveLastProductId =
-            lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
-          const { nextRoute, nextStack } = stepBackInStack(
-            routeStackRef.current,
-            routeRef.current,
-            effectiveLastProductId,
-          );
-          if (
-            nextRoute.view !== 'home' &&
-            (event.state.depth <= 0 || sessionHistoryDepthRef.current <= 0)
-          ) {
-            const grandParent = getParentRoute(nextRoute, effectiveLastProductId);
-            const grandParentEntry: HistoryNavEntry = {
-              appHistory: true,
-              route: grandParent,
-              cartOpen: false,
-              depth: 0,
-            };
-            const anchoredEntry: HistoryNavEntry = {
-              appHistory: true,
-              route: nextRoute,
-              cartOpen: false,
-              depth: 1,
-            };
-            window.history.replaceState(grandParentEntry, '', routeToHash(grandParent));
-            window.history.pushState(anchoredEntry, '', routeToHash(nextRoute));
-            historyDepthRef.current = 1;
-            sessionHistoryDepthRef.current = 1;
-          } else if (!isSameRoute(event.state.route, nextRoute)) {
-            // Browser skipped an intermediate step or hit a replaced slot; enforce exact step-by-step route
-            const repairedEntry: HistoryNavEntry = {
-              appHistory: true,
-              route: nextRoute,
-              cartOpen: false,
-              depth: event.state.depth,
-            };
-            window.history.replaceState(repairedEntry, '', routeToHash(nextRoute));
-          }
-          cartOpenRef.current = false;
-          routeRef.current = nextRoute;
-          setCartOpen(false);
-          setRoute(nextRoute);
-          persistRouteStack(nextStack);
-          window.scrollTo(0, 0);
-          return;
-        }
-
-        routeRef.current = event.state.route;
-        cartOpenRef.current = event.state.cartOpen;
-        setRoute(event.state.route);
-        setCartOpen(event.state.cartOpen);
-        persistRouteStack(pushRouteStack(routeStackRef.current, event.state.route));
-        if (!event.state.cartOpen) {
-          window.scrollTo(0, 0);
-        }
-      } else {
-        const parsed = parseHashToRoute(window.location.hash);
-        historyDepthRef.current = 0;
-        sessionHistoryDepthRef.current = 0;
-
-        if (wasCartOpen) {
-          cartOpenRef.current = false;
-          setCartOpen(false);
-          return;
-        }
-
-        const effectiveLastProductId =
-          lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
-        if (routeRef.current.view !== 'home') {
-          const { nextRoute, nextStack } = stepBackInStack(
-            routeStackRef.current,
-            routeRef.current,
-            effectiveLastProductId,
-          );
-          const repairedEntry: HistoryNavEntry = {
-            appHistory: true,
-            route: nextRoute,
-            cartOpen: false,
-            depth: 0,
-          };
-          window.history.replaceState(repairedEntry, '', routeToHash(nextRoute));
-          cartOpenRef.current = false;
-          routeRef.current = nextRoute;
-          setCartOpen(false);
-          setRoute(nextRoute);
-          persistRouteStack(nextStack);
-          window.scrollTo(0, 0);
-          return;
-        }
-
-        routeRef.current = parsed;
-        cartOpenRef.current = false;
-        setRoute(parsed);
-        setCartOpen(false);
-        persistRouteStack([parsed]);
-        window.scrollTo(0, 0);
-      }
-    };
-
-    // Keep at least one parent history entry behind nested views whenever historyDepth is 0
-    // so Android hardware Back never exits the app from Payment, Order Summary, Address, or PDP.
-    const anchorParentOnGesture = (event: Event) => {
-      if (historyDepthRef.current > 0 && sessionHistoryDepthRef.current > 0) return;
-      const current = routeRef.current;
-      if (current.view === 'home') return;
-
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.closest(
-          '[data-testid="checkout-back-button"], [data-testid="pdp-back-button"], [data-action="nav-back"]',
-        )
-      ) {
         return;
       }
 
+      const current = routeRef.current;
       const effectiveLastProductId =
         lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
-      const parent = getParentRoute(current, effectiveLastProductId);
-      const parentEntry: HistoryNavEntry = {
-        appHistory: true,
-        route: parent,
-        cartOpen: false,
-        depth: 0,
-      };
-      const currentEntry: HistoryNavEntry = {
-        appHistory: true,
-        route: current,
-        cartOpen: cartOpenRef.current,
-        depth: 1,
-      };
-      window.history.replaceState(parentEntry, '', routeToHash(parent));
-      window.history.pushState(currentEntry, '', routeToHash(current));
-      historyDepthRef.current = 1;
-      sessionHistoryDepthRef.current = 1;
+
+      if (isHistoryNavEntry(event.state)) {
+        const isForward = event.state.depth > historyDepthRef.current;
+        let target = event.state.route;
+
+        if (!isForward && current.view !== 'home' && isSameRoute(target, current)) {
+          target = stepBackInStack(
+            routeStackRef.current,
+            current,
+            effectiveLastProductId,
+          ).nextRoute;
+        }
+
+        historyDepthRef.current = event.state.depth;
+        routeRef.current = target;
+
+        if (isForward) {
+          routeStackRef.current = pushRouteStack(routeStackRef.current, target);
+        } else {
+          const currentStack = routeStackRef.current;
+          let matchIdx = -1;
+          for (let i = currentStack.length - 1; i >= 0; i -= 1) {
+            if (isSameRoute(currentStack[i], target)) {
+              matchIdx = i;
+              break;
+            }
+          }
+          if (matchIdx >= 0) {
+            routeStackRef.current = currentStack.slice(0, matchIdx + 1);
+          } else {
+            routeStackRef.current =
+              target.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, target];
+          }
+        }
+
+        setRoute(target);
+        setCartOpen(event.state.cartOpen);
+        window.scrollTo(0, 0);
+        return;
+      }
+
+      let parsed = parseHashToRoute(window.location.hash);
+      if (current.view !== 'home' && isSameRoute(parsed, current)) {
+        parsed = stepBackInStack(
+          routeStackRef.current,
+          current,
+          effectiveLastProductId,
+        ).nextRoute;
+      }
+      historyDepthRef.current = 0;
+      routeRef.current = parsed;
+      routeStackRef.current =
+        parsed.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, parsed];
+      setRoute(parsed);
+      setCartOpen(false);
+      window.scrollTo(0, 0);
     };
 
     window.addEventListener('popstate', handlePopState);
-    window.addEventListener('pointerdown', anchorParentOnGesture, true);
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      window.removeEventListener('pointerdown', anchorParentOnGesture, true);
+      if (popCleanupTimerRef.current !== null) {
+        window.clearTimeout(popCleanupTimerRef.current);
+      }
     };
-  }, [persistLastProductId, persistRouteStack]);
+  }, []);
 
   const navigateTo = useCallback(
     (nextRoute: AppRoute, options?: { replace?: boolean }) => {
-      const current = routeRef.current;
-      const isReplacingCartEntry = cartOpenRef.current;
+      if (popCleanupTimerRef.current !== null) {
+        window.clearTimeout(popCleanupTimerRef.current);
+        popCleanupTimerRef.current = null;
+      }
+      ignoreNextPopCountRef.current = 0;
 
-      if (!options?.replace && !isReplacingCartEntry && isSameRoute(current, nextRoute)) {
+      if (nextRoute.view === 'product') {
+        lastProductIdRef.current = nextRoute.productId;
+      }
+
+      const current = routeRef.current;
+      if (!options?.replace && isSameRoute(current, nextRoute)) {
+        setCartOpen(false);
         return;
       }
 
-      if (nextRoute.view === 'product') {
-        persistLastProductId(nextRoute.productId);
-      }
-
-      const isReplace = Boolean(options?.replace || isReplacingCartEntry);
-      const nextDepth = isReplace ? historyDepthRef.current : historyDepthRef.current + 1;
-
-      const entry: HistoryNavEntry = {
-        appHistory: true,
-        route: nextRoute,
-        cartOpen: false,
-        depth: nextDepth,
-      };
-
-      historyDepthRef.current = nextDepth;
-      if (!isReplace) {
-        sessionHistoryDepthRef.current += 1;
-      }
-
-      if (isReplace) {
+      if (options?.replace) {
+        const nextStack =
+          nextRoute.view === 'home'
+            ? [{ view: 'home' } as AppRoute]
+            : [...routeStackRef.current.slice(0, -1), nextRoute];
+        routeStackRef.current = nextStack;
+        const entry: HistoryNavEntry = {
+          appHistory: true,
+          route: nextRoute,
+          cartOpen: false,
+          depth: historyDepthRef.current,
+        };
         window.history.replaceState(entry, '', routeToHash(nextRoute));
       } else {
+        routeStackRef.current = pushRouteStack(routeStackRef.current, nextRoute);
+        historyDepthRef.current += 1;
+        const entry: HistoryNavEntry = {
+          appHistory: true,
+          route: nextRoute,
+          cartOpen: false,
+          depth: historyDepthRef.current,
+        };
         window.history.pushState(entry, '', routeToHash(nextRoute));
       }
 
-      cartOpenRef.current = false;
       routeRef.current = nextRoute;
       setCartOpen(false);
       setRoute(nextRoute);
-      persistRouteStack(pushRouteStack(routeStackRef.current, nextRoute));
       window.scrollTo(0, 0);
     },
-    [persistLastProductId, persistRouteStack],
+    [],
   );
 
-  const openCartDrawer = useCallback(() => {
-    if (cartOpenRef.current) return;
-    const nextDepth = historyDepthRef.current + 1;
-    const entry: HistoryNavEntry = {
-      appHistory: true,
-      route: routeRef.current,
-      cartOpen: true,
-      depth: nextDepth,
-    };
-    historyDepthRef.current = nextDepth;
-    sessionHistoryDepthRef.current += 1;
-    cartOpenRef.current = true;
-    window.history.pushState(entry, '', routeToHash(routeRef.current));
-    setCartOpen(true);
-  }, []);
-
-  const closeCartDrawer = useCallback(() => {
-    if (!cartOpenRef.current) return;
-    const currentState = window.history.state;
-    if (
-      isHistoryNavEntry(currentState) &&
-      currentState.cartOpen &&
-      currentState.depth > 0 &&
-      sessionHistoryDepthRef.current > 0
-    ) {
-      window.history.back();
-    } else {
-      cartOpenRef.current = false;
-      setCartOpen(false);
-    }
-  }, []);
-
   const handleGoBack = useCallback(() => {
-    const now = Date.now();
-    if (now - lastBackActionAtRef.current < 180) {
+    if (cartOpenRef.current) {
+      setCartOpen(false);
       return;
     }
-    lastBackActionAtRef.current = now;
 
     const current = routeRef.current;
-    if (current.view === 'home') {
-      return;
-    }
+    if (current.view === 'home') return;
 
     const effectiveLastProductId =
       lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
-    const { nextRoute, nextStack } = stepBackInStack(
-      routeStackRef.current,
-      current,
-      effectiveLastProductId,
-    );
+    const isCheckoutAddressFromCart =
+      current.view === 'checkout' &&
+      (current.step ?? 'address') === 'address' &&
+      checkoutOriginRef.current === 'cart';
 
-    if (
-      nextRoute.view !== 'home' &&
-      (historyDepthRef.current === 0 || sessionHistoryDepthRef.current === 0)
-    ) {
-      // Anchor grandParent behind nextRoute so subsequent hardware Back also stays in-app
-      const grandParent = getParentRoute(nextRoute, effectiveLastProductId);
-      const grandParentEntry: HistoryNavEntry = {
-        appHistory: true,
-        route: grandParent,
-        cartOpen: false,
-        depth: 0,
-      };
-      const parentEntry: HistoryNavEntry = {
-        appHistory: true,
-        route: nextRoute,
-        cartOpen: false,
-        depth: 1,
-      };
-      window.history.replaceState(grandParentEntry, '', routeToHash(grandParent));
-      window.history.pushState(parentEntry, '', routeToHash(nextRoute));
-      historyDepthRef.current = 1;
-      sessionHistoryDepthRef.current = 1;
+    const { nextRoute, nextStack } = isCheckoutAddressFromCart
+      ? { nextRoute: { view: 'home' } as AppRoute, nextStack: [{ view: 'home' } as AppRoute] }
+      : stepBackInStack(routeStackRef.current, current, effectiveLastProductId);
+
+    // Update UI state synchronously so repeated/rapid Back taps never stick
+    routeStackRef.current = nextStack;
+    routeRef.current = nextRoute;
+    setRoute(nextRoute);
+    window.scrollTo(0, 0);
+
+    // Sync browser history entry cleanly in the background
+    if (historyDepthRef.current > 0) {
+      historyDepthRef.current -= 1;
+      ignoreNextPopCountRef.current += 1;
+      if (popCleanupTimerRef.current !== null) {
+        window.clearTimeout(popCleanupTimerRef.current);
+      }
+      popCleanupTimerRef.current = window.setTimeout(() => {
+        ignoreNextPopCountRef.current = 0;
+        popCleanupTimerRef.current = null;
+        const syncedEntry: HistoryNavEntry = {
+          appHistory: true,
+          route: routeRef.current,
+          cartOpen: false,
+          depth: historyDepthRef.current,
+        };
+        window.history.replaceState(syncedEntry, '', routeToHash(routeRef.current));
+      }, 220);
+      window.history.back();
     } else {
       const entry: HistoryNavEntry = {
         appHistory: true,
         route: nextRoute,
         cartOpen: false,
-        depth: historyDepthRef.current,
+        depth: 0,
       };
       window.history.replaceState(entry, '', routeToHash(nextRoute));
     }
-
-    cartOpenRef.current = false;
-    routeRef.current = nextRoute;
-    setCartOpen(false);
-    setRoute(nextRoute);
-    persistRouteStack(nextStack);
-    window.scrollTo(0, 0);
-  }, [persistRouteStack]);
+  }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_CART_KEY, JSON.stringify(cartItems));
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorage(STORAGE_CART_KEY, cartItems);
   }, [cartItems]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(orders));
-    } catch {
-      // ignore quota errors
-    }
+    writeLocalStorage(STORAGE_ORDERS_KEY, orders);
   }, [orders]);
+
+  useEffect(() => {
+    writeLocalStorage(STORAGE_COUPON_KEY, couponCode);
+  }, [couponCode]);
 
   const pricing = useMemo(
     () => calculatePriceBreakdown(cartItems, couponCode),
@@ -507,8 +394,8 @@ export default function App() {
   );
 
   const setSelectedCheckoutItem = (product: Product, variant: ProductVariant, quantity: number) => {
-    persistLastProductId(product.id);
-    setCartItems([
+    lastProductIdRef.current = product.id;
+    const nextItems: CartItem[] = [
       {
         productId: product.id,
         variantId: variant.id,
@@ -522,18 +409,26 @@ export default function App() {
         mrp: variant.mrp,
         quantity,
       },
-    ]);
+    ];
+    writeLocalStorage(STORAGE_CART_KEY, nextItems);
+    setCartItems(nextItems);
+  };
+
+  const prepareFreshAddressEntry = (origin: 'pdp' | 'cart') => {
+    setLastCheckoutSnapshot(null);
+    setCheckoutAddress(EMPTY_ADDRESS);
+    checkoutOriginRef.current = origin;
   };
 
   const handlePdpAddToCart = (product: Product, variant: ProductVariant, quantity: number) => {
     setSelectedCheckoutItem(product, variant, quantity);
-    setCheckoutAddress(EMPTY_ADDRESS);
+    prepareFreshAddressEntry('pdp');
     navigateTo({ view: 'checkout', step: 'address' });
   };
 
   const handleBuyNow = (product: Product, variant: ProductVariant, quantity: number) => {
     setSelectedCheckoutItem(product, variant, quantity);
-    setCheckoutAddress(EMPTY_ADDRESS);
+    prepareFreshAddressEntry('pdp');
     navigateTo({ view: 'checkout', step: 'address' });
   };
 
@@ -587,27 +482,43 @@ export default function App() {
   };
 
   const handleOrderComplete = (order: Order) => {
-    setOrders((prev) => [order, ...prev]);
-    setCheckoutAddress(EMPTY_ADDRESS);
+    const nextOrders = [order, ...orders];
+    setLastCheckoutSnapshot({
+      items: [...order.items],
+      pricing: { ...order.pricing },
+      address: { ...order.address },
+    });
+    setOrders(nextOrders);
+    setLatestOrder(order);
     setCartItems([]);
+    setCheckoutAddress(EMPTY_ADDRESS);
     setCouponCode('');
     setCouponFeedback(null);
+    navigateTo({ view: 'order-success' });
   };
 
   const handleCancelOrder = (orderId: string) => {
     setOrders((prev) =>
-      prev.map((order) => (order.id === orderId ? { ...order, status: 'Cancelled' } : order)),
+      prev.map((order) =>
+        order.id === orderId ? { ...order, status: 'Cancelled' as const } : order,
+      ),
     );
   };
 
   const handleAddReview = (productId: string, review: ProductReview) => {
+    const extraReviewsMap = readLocalStorage<Record<string, ProductReview[]>>(
+      STORAGE_REVIEWS_KEY,
+      {},
+    );
+    extraReviewsMap[productId] = [review, ...(extraReviewsMap[productId] ?? [])];
+    writeLocalStorage(STORAGE_REVIEWS_KEY, extraReviewsMap);
+
     setProducts((prev) =>
       prev.map((prod) => {
         if (prod.id !== productId) return prod;
         const nextReviews = [review, ...prod.reviews];
         const nextCount = prod.reviewCount + 1;
-        const avg =
-          nextReviews.reduce((sum, r) => sum + r.rating, 0) / nextReviews.length;
+        const avg = nextReviews.reduce((sum, r) => sum + r.rating, 0) / nextReviews.length;
         return {
           ...prod,
           reviews: nextReviews,
@@ -620,6 +531,10 @@ export default function App() {
 
   const navigateHome = (category?: string) => {
     if (category) setActiveCategory(category);
+    if (route.view === 'home') {
+      setCartOpen(false);
+      return;
+    }
     navigateTo({ view: 'home' });
   };
 
@@ -631,26 +546,26 @@ export default function App() {
     navigateTo(highlightOrderId ? { view: 'orders', highlightOrderId } : { view: 'orders' });
   };
 
-  const previousRoute =
-    routeStack.length >= 2 ? routeStack[routeStack.length - 2] : undefined;
   const checkoutBackLabel =
-    previousRoute?.view === 'product' ? 'Back to Product' : 'Back to Store';
+    lastProductIdRef.current ? 'Back to Product' : 'Back to Store';
 
   const activeProduct =
     route.view === 'product'
       ? products.find((p) => p.id === route.productId) ?? products[0]
       : null;
 
+  const successOrder = latestOrder ?? orders[0] ?? null;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F1F3F6] text-[#111827]">
-      {route.view !== 'home' && route.view !== 'product' && route.view !== 'checkout' && (
+      {route.view === 'orders' && (
         <Header
           route={route}
           activeCategory={activeCategory}
           orderCount={orders.length}
           onNavigateHome={navigateHome}
           onNavigateOrders={() => navigateOrders()}
-          onOpenCart={openCartDrawer}
+          onOpenCart={() => setCartOpen(true)}
         />
       )}
 
@@ -664,7 +579,7 @@ export default function App() {
             onCategoryChange={setActiveCategory}
             onSearchChange={setSearchQuery}
             onSelectProduct={navigateProduct}
-            onOpenCart={openCartDrawer}
+            onOpenCart={() => setCartOpen(true)}
             onNavigateOrders={() => navigateOrders()}
           />
         )}
@@ -675,7 +590,7 @@ export default function App() {
             product={activeProduct}
             relatedProducts={products.filter((p) => p.id !== activeProduct.id)}
             onBack={handleGoBack}
-            onOpenCart={openCartDrawer}
+            onOpenCart={() => setCartOpen(true)}
             onAddToCart={handlePdpAddToCart}
             onBuyNow={handleBuyNow}
             onSelectProduct={navigateProduct}
@@ -686,18 +601,47 @@ export default function App() {
         {route.view === 'checkout' && (
           <CheckoutPage
             step={route.step === 'payment' ? 3 : route.step === 'summary' ? 2 : 1}
-            items={cartItems}
-            pricing={pricing}
-            initialAddress={checkoutAddress}
+            items={cartItems.length > 0 ? cartItems : (lastCheckoutSnapshot?.items ?? [])}
+            pricing={cartItems.length > 0 ? pricing : (lastCheckoutSnapshot?.pricing ?? pricing)}
+            initialAddress={
+              cartItems.length > 0
+                ? checkoutAddress
+                : (lastCheckoutSnapshot?.address ?? checkoutAddress)
+            }
             backLabel={checkoutBackLabel}
             onBack={handleGoBack}
             onAdvanceStep={handleAdvanceCheckoutStep}
             onReplaceToAddress={handleReplaceToAddress}
             onSaveAddress={handleSaveAddress}
-            onBackToStore={() => navigateHome()}
+            onBackToStore={() => navigateTo({ view: 'home' })}
             onOrderComplete={handleOrderComplete}
             onViewOrders={(orderId) => navigateOrders(orderId)}
           />
+        )}
+
+        {route.view === 'order-success' && (
+          successOrder ? (
+            <OrderSuccessFlow
+              order={successOrder}
+              onContinueShopping={() => navigateTo({ view: 'home' })}
+            />
+          ) : (
+            <main className="max-w-2xl mx-auto px-4 py-16 text-center">
+              <h1 className="font-display text-2xl font-bold text-[#111827]">
+                No recent order found
+              </h1>
+              <p className="text-sm text-[#6B7280] mt-2 mb-6">
+                Explore festive deals to place a new order.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigateTo({ view: 'home' })}
+                className="inline-flex items-center justify-center px-6 py-3 text-sm font-semibold text-white bg-[#2874F0] hover:bg-[#1E60D5] rounded-lg cursor-pointer"
+              >
+                Continue Shopping
+              </button>
+            </main>
+          )
         )}
 
         {route.view === 'orders' && (
@@ -710,8 +654,8 @@ export default function App() {
         )}
       </div>
 
-      {/* Quiet Editorial Footer (hidden on checkout so delivery address matches full-height white flow) */}
-      {route.view !== 'checkout' && (
+      {/* Quiet Editorial Footer (hidden on checkout & order-success so checkout matches full-height white flow) */}
+      {route.view !== 'checkout' && route.view !== 'order-success' && (
         <footer className="border-t border-stone-200 bg-white mt-auto">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-stone-500">
             <div>
@@ -737,7 +681,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={openCartDrawer}
+                onClick={() => setCartOpen(true)}
                 className="hover:text-stone-900 cursor-pointer"
               >
                 Shopping Cart
@@ -754,13 +698,14 @@ export default function App() {
         pricing={pricing}
         couponCode={couponCode}
         couponFeedback={couponFeedback}
-        onClose={closeCartDrawer}
+        onClose={() => setCartOpen(false)}
         onUpdateQty={handleUpdateQty}
         onRemoveItem={handleRemoveItem}
         onApplyCoupon={handleApplyCoupon}
         onRemoveCoupon={handleRemoveCoupon}
         onProceedToCheckout={() => {
-          setCheckoutAddress(EMPTY_ADDRESS);
+          setCartOpen(false);
+          prepareFreshAddressEntry('cart');
           navigateTo({ view: 'checkout', step: 'address' });
         }}
       />
