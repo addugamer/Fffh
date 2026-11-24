@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Package } from 'lucide-react';
+import { resolveAssetUrl } from '../utils/assets';
 
 interface SmartImageProps {
   src: string;
@@ -10,8 +11,13 @@ interface SmartImageProps {
 
 export function SmartImage({ src, alt, className = '', fallbackTitle }: SmartImageProps) {
   const [failed, setFailed] = useState(false);
+  const resolvedSrc = resolveAssetUrl(src, import.meta.env.BASE_URL);
 
-  if (failed || !src) {
+  useEffect(() => {
+    setFailed(false);
+  }, [resolvedSrc]);
+
+  if (failed || !resolvedSrc) {
     return (
       <div
         role="img"
@@ -28,7 +34,7 @@ export function SmartImage({ src, alt, className = '', fallbackTitle }: SmartIma
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
