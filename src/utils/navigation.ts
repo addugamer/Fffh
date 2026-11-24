@@ -2,8 +2,10 @@ import type { AppRoute, CheckoutStep } from '../types/store';
 
 export interface HistoryNavEntry {
   appHistory: true;
+  id?: number;
   route: AppRoute;
   cartOpen: boolean;
+  portal?: 'shop' | 'travel';
   depth: number;
 }
 
@@ -163,3 +165,89 @@ export function getInitialAppRoute(rawHash: string): AppRoute {
   }
   return parsed;
 }
+
+export interface BackResolutionInput {
+  currentRoute: AppRoute;
+  stack: AppRoute[];
+  cartOpen: boolean;
+  homePortal: 'shop' | 'travel';
+  checkoutOrigin: 'pdp' | 'cart';
+  lastProductId?: string;
+}
+
+export interface BackResolutionOutput {
+  handled: boolean;
+  nextRoute: AppRoute;
+  nextStack: AppRoute[];
+  nextCartOpen: boolean;
+  nextHomePortal: 'shop' | 'travel';
+}
+
+/**
+ * Unified step-back state transition shared by both the top-left UI Back arrow
+ * and the mobile/browser hardware Back button (popstate).
+ */
+export function resolveBackStep(input: BackResolutionInput): BackResolutionOutput {
+  const {
+    currentRoute,
+    stack,
+    cartOpen,
+    homePortal,
+    checkoutOrigin,
+    lastProductId,
+  } = input;
+
+  if (cartOpen) {
+    return {
+      handled: true,
+      nextRoute: currentRoute,
+      nextStack: stack,
+      nextCartOpen: false,
+      nextHomePortal: homePortal,
+    };
+  }
+
+  if (currentRoute.view === 'home') {
+    if (homePortal === 'travel') {
+      return {
+        handled: true,
+        nextRoute: currentRoute,
+        nextStack: [{ view: 'home' }],
+        nextCartOpen: false,
+        nextHomePortal: 'shop',
+      };
+    }
+    return {
+      handled: false,
+      nextRoute: currentRoute,
+      nextStack: [{ view: 'home' }],
+      nextCartOpen: false,
+      nextHomePortal: 'shop',
+    };
+  }
+
+  const isCheckoutAddressFromCart =
+    currentRoute.view === 'checkout' &&
+    normalizeCheckoutStep(currentRoute.step) === 'address' &&
+    checkoutOrigin === 'cart';
+
+  if (isCheckoutAddressFromCart) {
+    return {
+      handled: true,
+      nextRoute: { view: 'home' },
+      nextStack: [{ view: 'home' }],
+      nextCartOpen: false,
+      nextHomePortal: 'shop',
+    };
+  }
+
+  const stepped = stepBackInStack(stack, currentRoute, lastProductId);
+  return {
+    handled: true,
+    nextRoute: stepped.nextRoute,
+    nextStack: stepped.nextStack,
+    nextCartOpen: false,
+    nextHomePortal: 'shop',
+  };
+}
+

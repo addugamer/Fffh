@@ -29,6 +29,8 @@ interface HomePageProps {
   activeCategory: string;
   searchQuery: string;
   orderCount: number;
+  activePortal?: 'shop' | 'travel';
+  onPortalChange?: (portal: 'shop' | 'travel') => void;
   onCategoryChange: (category: string) => void;
   onSearchChange: (q: string) => void;
   onSelectProduct: (productId: string) => void;
@@ -121,13 +123,20 @@ export function HomePage({
   activeCategory,
   searchQuery,
   orderCount,
+  activePortal: controlledPortal,
+  onPortalChange,
   onCategoryChange,
   onSearchChange,
   onSelectProduct,
   onOpenCart,
   onNavigateOrders,
 }: HomePageProps) {
-  const [activePortal, setActivePortal] = useState<'shop' | 'travel'>('shop');
+  const [internalPortal, setInternalPortal] = useState<'shop' | 'travel'>('shop');
+  const activePortal = controlledPortal ?? internalPortal;
+  const setActivePortal = (next: 'shop' | 'travel') => {
+    setInternalPortal(next);
+    onPortalChange?.(next);
+  };
   const [carousel, setCarousel] = useState<CarouselPingPongState>({
     index: 0,
     direction: 1,

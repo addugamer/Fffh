@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -35,6 +35,7 @@ interface CheckoutPageProps {
   onReplaceToAddress: () => void;
   onSaveAddress: (addr: ShippingAddress) => void;
   onBackToStore: () => void;
+  onPrepareOrderSuccess?: () => void;
   onOrderComplete: (order: Order) => void;
   onViewOrders?: (orderId: string) => void;
 }
@@ -88,6 +89,7 @@ export function CheckoutPage({
   onReplaceToAddress,
   onSaveAddress,
   onBackToStore,
+  onPrepareOrderSuccess,
   onOrderComplete,
 }: CheckoutPageProps) {
   const [address, setAddress] = useState<ShippingAddress>(initialAddress);
@@ -95,10 +97,19 @@ export function CheckoutPage({
 
   const [selectedUpiApp, setSelectedUpiApp] = useState<QuickUpiApp>('phonepe');
   const [isProcessing, setIsProcessing] = useState(false);
+  const payTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setAddress(initialAddress);
   }, [initialAddress]);
+
+  useEffect(() => {
+    return () => {
+      if (payTimerRef.current !== null) {
+        window.clearTimeout(payTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (step > 1 && Object.keys(validateAddress(address)).length > 0) {
@@ -122,8 +133,11 @@ export function CheckoutPage({
 
   const handlePayNow = (e: FormEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
+    onPrepareOrderSuccess?.();
     setIsProcessing(true);
-    window.setTimeout(() => {
+    payTimerRef.current = window.setTimeout(() => {
+      payTimerRef.current = null;
       const pinCheck = checkPincodeDelivery(address.pincode);
       const orderId = generateOrderId();
       const paymentSummary = selectedUpiApp === 'phonepe' ? 'PhonePe UPI' : 'Paytm UPI';

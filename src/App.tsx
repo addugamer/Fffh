@@ -25,8 +25,8 @@ import {
   isSameRoute,
   parseHashToRoute,
   pushRouteStack,
+  resolveBackStep,
   routeToHash,
-  stepBackInStack,
   type HistoryNavEntry,
 } from './utils/navigation';
 
@@ -127,6 +127,7 @@ export default function App() {
   } | null>(null);
 
   const [cartOpen, setCartOpen] = useState(false);
+  const [homePortal, setHomePortal] = useState<'shop' | 'travel'>('shop');
   const [couponCode, setCouponCode] = useState<string>(() =>
     readLocalStorage<string>(STORAGE_COUPON_KEY, ''),
   );
@@ -140,18 +141,24 @@ export default function App() {
     route.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, route],
   );
   const historyDepthRef = useRef<number>(0);
-  const ignoreNextPopCountRef = useRef<number>(0);
-  const popCleanupTimerRef = useRef<number | null>(null);
+  const navIdCounterRef = useRef<number>(1);
+  const pendingUiBackPopsRef = useRef<number[]>([]);
+  const orderSuccessReservedRef = useRef<boolean>(false);
   const lastProductIdRef = useRef<string | undefined>(
     route.view === 'product' ? route.productId : undefined,
   );
   const checkoutOriginRef = useRef<'pdp' | 'cart'>('pdp');
   const cartItemsRef = useRef<CartItem[]>(cartItems);
   const cartOpenRef = useRef<boolean>(cartOpen);
+  const homePortalRef = useRef<'shop' | 'travel'>(homePortal);
 
   useEffect(() => {
     cartOpenRef.current = cartOpen;
   }, [cartOpen]);
+
+  useEffect(() => {
+    homePortalRef.current = homePortal;
+  }, [homePortal]);
 
   useEffect(() => {
     routeRef.current = route;
@@ -183,120 +190,161 @@ export default function App() {
     const initial = routeRef.current;
     const initialEntry: HistoryNavEntry = {
       appHistory: true,
+      id: navIdCounterRef.current,
       route: initial,
       cartOpen: false,
+      portal: 'shop',
       depth: 0,
     };
     window.history.replaceState(initialEntry, '', routeToHash(initial));
 
     const handlePopState = (event: PopStateEvent) => {
-      if (ignoreNextPopCountRef.current > 0) {
-        ignoreNextPopCountRef.current -= 1;
-        if (ignoreNextPopCountRef.current === 0 && popCleanupTimerRef.current !== null) {
-          window.clearTimeout(popCleanupTimerRef.current);
-          popCleanupTimerRef.current = null;
-        }
+      // Consume auto-pop events triggered by our UI Back arrow / Close Cart button
+      const now = Date.now();
+      pendingUiBackPopsRef.current = pendingUiBackPopsRef.current.filter((exp) => exp >= now);
+      if (pendingUiBackPopsRef.current.length > 0) {
+        pendingUiBackPopsRef.current.shift();
         return;
       }
 
+      const incomingEntry = isHistoryNavEntry(event.state) ? event.state : null;
       const current = routeRef.current;
-      const effectiveLastProductId =
-        lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
+      const isCart = cartOpenRef.current;
+      const portal = homePortalRef.current;
 
-      if (isHistoryNavEntry(event.state)) {
-        const isForward = event.state.depth > historyDepthRef.current;
-        let target = event.state.route;
-
-        if (!isForward && current.view !== 'home' && isSameRoute(target, current)) {
-          target = stepBackInStack(
-            routeStackRef.current,
-            current,
-            effectiveLastProductId,
-          ).nextRoute;
-        }
-
-        historyDepthRef.current = event.state.depth;
+      // Browser Forward button
+      if (incomingEntry && incomingEntry.depth > historyDepthRef.current) {
+        const target = incomingEntry.route;
+        const targetPortal = incomingEntry.portal ?? 'shop';
+        historyDepthRef.current = incomingEntry.depth;
         routeRef.current = target;
-
-        if (isForward) {
-          routeStackRef.current = pushRouteStack(routeStackRef.current, target);
-        } else {
-          const currentStack = routeStackRef.current;
-          let matchIdx = -1;
-          for (let i = currentStack.length - 1; i >= 0; i -= 1) {
-            if (isSameRoute(currentStack[i], target)) {
-              matchIdx = i;
-              break;
-            }
-          }
-          if (matchIdx >= 0) {
-            routeStackRef.current = currentStack.slice(0, matchIdx + 1);
-          } else {
-            routeStackRef.current =
-              target.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, target];
-          }
-        }
-
+        routeStackRef.current = pushRouteStack(routeStackRef.current, target);
+        cartOpenRef.current = incomingEntry.cartOpen;
+        homePortalRef.current = targetPortal;
         setRoute(target);
-        setCartOpen(event.state.cartOpen);
+        setCartOpen(incomingEntry.cartOpen);
+        setHomePortal(targetPortal);
         window.scrollTo(0, 0);
         return;
       }
 
-      let parsed = parseHashToRoute(window.location.hash);
-      if (current.view !== 'home' && isSameRoute(parsed, current)) {
-        parsed = stepBackInStack(
-          routeStackRef.current,
-          current,
-          effectiveLastProductId,
-        ).nextRoute;
+      // If on plain Shopping Home and Forward->Home pushed over OrderSuccess/Orders, restore the popped route
+      if (
+        current.view === 'home' &&
+        !isCart &&
+        portal === 'shop' &&
+        incomingEntry &&
+        (incomingEntry.route.view !== 'home' ||
+          incomingEntry.cartOpen ||
+          incomingEntry.portal === 'travel')
+      ) {
+        const target = incomingEntry.route;
+        const targetPortal = incomingEntry.portal ?? 'shop';
+        historyDepthRef.current = incomingEntry.depth;
+        routeRef.current = target;
+        routeStackRef.current =
+          target.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, target];
+        cartOpenRef.current = incomingEntry.cartOpen;
+        homePortalRef.current = targetPortal;
+        setRoute(target);
+        setCartOpen(incomingEntry.cartOpen);
+        setHomePortal(targetPortal);
+        window.scrollTo(0, 0);
+        return;
       }
-      historyDepthRef.current = 0;
-      routeRef.current = parsed;
-      routeStackRef.current =
-        parsed.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, parsed];
-      setRoute(parsed);
-      setCartOpen(false);
+
+      // Unified Back logic: Mobile hardware Back executes the exact same transition as UI Back
+      const effectiveLastProductId =
+        lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
+      const resolution = resolveBackStep({
+        currentRoute: current,
+        stack: routeStackRef.current,
+        cartOpen: isCart,
+        homePortal: portal,
+        checkoutOrigin: checkoutOriginRef.current,
+        lastProductId: effectiveLastProductId,
+      });
+
+      const nextDepth = incomingEntry
+        ? incomingEntry.depth
+        : Math.max(0, historyDepthRef.current - 1);
+      historyDepthRef.current = nextDepth;
+      orderSuccessReservedRef.current = false;
+
+      if (!resolution.handled) {
+        const parsed = parseHashToRoute(window.location.hash);
+        routeRef.current = parsed;
+        routeStackRef.current =
+          parsed.view === 'home' ? [{ view: 'home' }] : [{ view: 'home' }, parsed];
+        cartOpenRef.current = false;
+        homePortalRef.current = 'shop';
+        setRoute(parsed);
+        setCartOpen(false);
+        setHomePortal('shop');
+        return;
+      }
+
+      routeStackRef.current = resolution.nextStack;
+      routeRef.current = resolution.nextRoute;
+      cartOpenRef.current = resolution.nextCartOpen;
+      homePortalRef.current = resolution.nextHomePortal;
+      setCartOpen(resolution.nextCartOpen);
+      setHomePortal(resolution.nextHomePortal);
+      setRoute(resolution.nextRoute);
       window.scrollTo(0, 0);
+
+      navIdCounterRef.current += 1;
+      const syncedEntry: HistoryNavEntry = {
+        appHistory: true,
+        id: navIdCounterRef.current,
+        route: resolution.nextRoute,
+        cartOpen: resolution.nextCartOpen,
+        portal: resolution.nextHomePortal,
+        depth: nextDepth,
+      };
+      const syncedUrl =
+        resolution.nextRoute.view === 'home' && resolution.nextHomePortal === 'travel'
+          ? '#/travel'
+          : routeToHash(resolution.nextRoute);
+      window.history.replaceState(syncedEntry, '', syncedUrl);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      if (popCleanupTimerRef.current !== null) {
-        window.clearTimeout(popCleanupTimerRef.current);
-      }
     };
   }, []);
 
   const navigateTo = useCallback(
     (nextRoute: AppRoute, options?: { replace?: boolean }) => {
-      if (popCleanupTimerRef.current !== null) {
-        window.clearTimeout(popCleanupTimerRef.current);
-        popCleanupTimerRef.current = null;
-      }
-      ignoreNextPopCountRef.current = 0;
-
       if (nextRoute.view === 'product') {
         lastProductIdRef.current = nextRoute.productId;
       }
 
       const current = routeRef.current;
-      if (!options?.replace && isSameRoute(current, nextRoute)) {
-        setCartOpen(false);
+      if (!options?.replace && isSameRoute(current, nextRoute) && !cartOpenRef.current) {
+        orderSuccessReservedRef.current = false;
         return;
       }
 
+      navIdCounterRef.current += 1;
       if (options?.replace) {
         const nextStack =
           nextRoute.view === 'home'
             ? [{ view: 'home' } as AppRoute]
-            : [...routeStackRef.current.slice(0, -1), nextRoute];
+            : current.view === nextRoute.view &&
+                (nextRoute.view !== 'checkout' ||
+                  (current.view === 'checkout' &&
+                    (current.step ?? 'address') === (nextRoute.step ?? 'address')))
+              ? [...routeStackRef.current.slice(0, -1), nextRoute]
+              : pushRouteStack(routeStackRef.current, nextRoute);
         routeStackRef.current = nextStack;
         const entry: HistoryNavEntry = {
           appHistory: true,
+          id: navIdCounterRef.current,
           route: nextRoute,
           cartOpen: false,
+          portal: 'shop',
           depth: historyDepthRef.current,
         };
         window.history.replaceState(entry, '', routeToHash(nextRoute));
@@ -305,74 +353,143 @@ export default function App() {
         historyDepthRef.current += 1;
         const entry: HistoryNavEntry = {
           appHistory: true,
+          id: navIdCounterRef.current,
           route: nextRoute,
           cartOpen: false,
+          portal: 'shop',
           depth: historyDepthRef.current,
         };
         window.history.pushState(entry, '', routeToHash(nextRoute));
       }
 
+      orderSuccessReservedRef.current = false;
       routeRef.current = nextRoute;
+      cartOpenRef.current = false;
+      homePortalRef.current = 'shop';
       setCartOpen(false);
+      setHomePortal('shop');
       setRoute(nextRoute);
       window.scrollTo(0, 0);
     },
     [],
   );
 
-  const handleGoBack = useCallback(() => {
-    if (cartOpenRef.current) {
-      setCartOpen(false);
-      return;
-    }
+  const handleOpenCart = useCallback(() => {
+    if (cartOpenRef.current) return;
+    navIdCounterRef.current += 1;
+    historyDepthRef.current += 1;
+    const entry: HistoryNavEntry = {
+      appHistory: true,
+      id: navIdCounterRef.current,
+      route: routeRef.current,
+      cartOpen: true,
+      portal: homePortalRef.current,
+      depth: historyDepthRef.current,
+    };
+    window.history.pushState(entry, '', routeToHash(routeRef.current));
+    cartOpenRef.current = true;
+    setCartOpen(true);
+  }, []);
 
-    const current = routeRef.current;
-    if (current.view === 'home') return;
-
-    const effectiveLastProductId =
-      lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
-    const isCheckoutAddressFromCart =
-      current.view === 'checkout' &&
-      (current.step ?? 'address') === 'address' &&
-      checkoutOriginRef.current === 'cart';
-
-    const { nextRoute, nextStack } = isCheckoutAddressFromCart
-      ? { nextRoute: { view: 'home' } as AppRoute, nextStack: [{ view: 'home' } as AppRoute] }
-      : stepBackInStack(routeStackRef.current, current, effectiveLastProductId);
-
-    // Update UI state synchronously so repeated/rapid Back taps never stick
-    routeStackRef.current = nextStack;
-    routeRef.current = nextRoute;
-    setRoute(nextRoute);
-    window.scrollTo(0, 0);
-
-    // Sync browser history entry cleanly in the background
-    if (historyDepthRef.current > 0) {
-      historyDepthRef.current -= 1;
-      ignoreNextPopCountRef.current += 1;
-      if (popCleanupTimerRef.current !== null) {
-        window.clearTimeout(popCleanupTimerRef.current);
-      }
-      popCleanupTimerRef.current = window.setTimeout(() => {
-        ignoreNextPopCountRef.current = 0;
-        popCleanupTimerRef.current = null;
-        const syncedEntry: HistoryNavEntry = {
-          appHistory: true,
-          route: routeRef.current,
-          cartOpen: false,
-          depth: historyDepthRef.current,
-        };
-        window.history.replaceState(syncedEntry, '', routeToHash(routeRef.current));
-      }, 220);
-      window.history.back();
-    } else {
+  const handlePortalChange = useCallback((nextPortal: 'shop' | 'travel') => {
+    if (homePortalRef.current === nextPortal) return;
+    if (nextPortal === 'travel') {
+      navIdCounterRef.current += 1;
+      historyDepthRef.current += 1;
       const entry: HistoryNavEntry = {
         appHistory: true,
-        route: nextRoute,
+        id: navIdCounterRef.current,
+        route: { view: 'home' },
         cartOpen: false,
+        portal: 'travel',
+        depth: historyDepthRef.current,
+      };
+      window.history.pushState(entry, '', '#/travel');
+      homePortalRef.current = 'travel';
+      setHomePortal('travel');
+      window.scrollTo(0, 0);
+    } else {
+      homePortalRef.current = 'shop';
+      setHomePortal('shop');
+      if (historyDepthRef.current > 0) {
+        historyDepthRef.current -= 1;
+        pendingUiBackPopsRef.current.push(Date.now() + 400);
+        window.history.back();
+      } else {
+        navIdCounterRef.current += 1;
+        window.history.replaceState(
+          {
+            appHistory: true,
+            id: navIdCounterRef.current,
+            route: { view: 'home' },
+            cartOpen: false,
+            portal: 'shop',
+            depth: 0,
+          },
+          '',
+          '#/',
+        );
+      }
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  const handlePrepareOrderSuccess = useCallback(() => {
+    if (orderSuccessReservedRef.current) return;
+    orderSuccessReservedRef.current = true;
+    navIdCounterRef.current += 1;
+    historyDepthRef.current += 1;
+    const entry: HistoryNavEntry = {
+      appHistory: true,
+      id: navIdCounterRef.current,
+      route: { view: 'order-success' },
+      cartOpen: false,
+      portal: 'shop',
+      depth: historyDepthRef.current,
+    };
+    window.history.pushState(entry, '', routeToHash({ view: 'checkout', step: 'payment' }));
+  }, []);
+
+  const handleGoBack = useCallback(() => {
+    const effectiveLastProductId =
+      lastProductIdRef.current ?? cartItemsRef.current[0]?.productId;
+    const resolution = resolveBackStep({
+      currentRoute: routeRef.current,
+      stack: routeStackRef.current,
+      cartOpen: cartOpenRef.current,
+      homePortal: homePortalRef.current,
+      checkoutOrigin: checkoutOriginRef.current,
+      lastProductId: effectiveLastProductId,
+    });
+
+    if (!resolution.handled) return;
+
+    orderSuccessReservedRef.current = false;
+    routeStackRef.current = resolution.nextStack;
+    routeRef.current = resolution.nextRoute;
+    cartOpenRef.current = resolution.nextCartOpen;
+    homePortalRef.current = resolution.nextHomePortal;
+    setCartOpen(resolution.nextCartOpen);
+    setHomePortal(resolution.nextHomePortal);
+    setRoute(resolution.nextRoute);
+    window.scrollTo(0, 0);
+
+    // Keep browser history synchronized with UI step-back so Mobile Back never desyncs
+    if (historyDepthRef.current > 0) {
+      historyDepthRef.current -= 1;
+      pendingUiBackPopsRef.current.push(Date.now() + 400);
+      window.history.back();
+    } else {
+      navIdCounterRef.current += 1;
+      const entry: HistoryNavEntry = {
+        appHistory: true,
+        id: navIdCounterRef.current,
+        route: resolution.nextRoute,
+        cartOpen: resolution.nextCartOpen,
+        portal: resolution.nextHomePortal,
         depth: 0,
       };
-      window.history.replaceState(entry, '', routeToHash(nextRoute));
+      window.history.replaceState(entry, '', routeToHash(resolution.nextRoute));
     }
   }, []);
 
@@ -494,7 +611,11 @@ export default function App() {
     setCheckoutAddress(EMPTY_ADDRESS);
     setCouponCode('');
     setCouponFeedback(null);
-    navigateTo({ view: 'order-success' });
+    if (orderSuccessReservedRef.current) {
+      navigateTo({ view: 'order-success' }, { replace: true });
+    } else {
+      navigateTo({ view: 'order-success' });
+    }
   };
 
   const handleCancelOrder = (orderId: string) => {
@@ -565,7 +686,7 @@ export default function App() {
           orderCount={orders.length}
           onNavigateHome={navigateHome}
           onNavigateOrders={() => navigateOrders()}
-          onOpenCart={() => setCartOpen(true)}
+          onOpenCart={handleOpenCart}
         />
       )}
 
@@ -576,10 +697,12 @@ export default function App() {
             activeCategory={activeCategory}
             searchQuery={searchQuery}
             orderCount={orders.length}
+            activePortal={homePortal}
+            onPortalChange={handlePortalChange}
             onCategoryChange={setActiveCategory}
             onSearchChange={setSearchQuery}
             onSelectProduct={navigateProduct}
-            onOpenCart={() => setCartOpen(true)}
+            onOpenCart={handleOpenCart}
             onNavigateOrders={() => navigateOrders()}
           />
         )}
@@ -590,7 +713,7 @@ export default function App() {
             product={activeProduct}
             relatedProducts={products.filter((p) => p.id !== activeProduct.id)}
             onBack={handleGoBack}
-            onOpenCart={() => setCartOpen(true)}
+            onOpenCart={handleOpenCart}
             onAddToCart={handlePdpAddToCart}
             onBuyNow={handleBuyNow}
             onSelectProduct={navigateProduct}
@@ -614,6 +737,7 @@ export default function App() {
             onReplaceToAddress={handleReplaceToAddress}
             onSaveAddress={handleSaveAddress}
             onBackToStore={() => navigateTo({ view: 'home' })}
+            onPrepareOrderSuccess={handlePrepareOrderSuccess}
             onOrderComplete={handleOrderComplete}
             onViewOrders={(orderId) => navigateOrders(orderId)}
           />
@@ -681,7 +805,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setCartOpen(true)}
+                onClick={handleOpenCart}
                 className="hover:text-stone-900 cursor-pointer"
               >
                 Shopping Cart
@@ -698,15 +822,14 @@ export default function App() {
         pricing={pricing}
         couponCode={couponCode}
         couponFeedback={couponFeedback}
-        onClose={() => setCartOpen(false)}
+        onClose={handleGoBack}
         onUpdateQty={handleUpdateQty}
         onRemoveItem={handleRemoveItem}
         onApplyCoupon={handleApplyCoupon}
         onRemoveCoupon={handleRemoveCoupon}
         onProceedToCheckout={() => {
-          setCartOpen(false);
           prepareFreshAddressEntry('cart');
-          navigateTo({ view: 'checkout', step: 'address' });
+          navigateTo({ view: 'checkout', step: 'address' }, { replace: true });
         }}
       />
     </div>

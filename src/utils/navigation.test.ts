@@ -9,6 +9,7 @@ import {
   parseHashToRoute,
   popRouteStack,
   pushRouteStack,
+  resolveBackStep,
   routeToHash,
   stepBackInStack,
 } from './navigation';
@@ -259,3 +260,53 @@ test('continuous repeat forward and back cycles maintain exact Home <-> PDP <-> 
     assert.deepEqual(stack, [{ view: 'home' }]);
   }
 });
+
+test('resolveBackStep unifies CartDrawer, Travel portal, Cart checkout origin, and full reverse chain', () => {
+  // 1. Open CartDrawer closes Cart first without leaving current route
+  const fromCart = resolveBackStep({
+    currentRoute: { view: 'product', productId: 'chair-1' },
+    stack: [{ view: 'home' }, { view: 'product', productId: 'chair-1' }],
+    cartOpen: true,
+    homePortal: 'shop',
+    checkoutOrigin: 'pdp',
+    lastProductId: 'chair-1',
+  });
+  assert.equal(fromCart.handled, true);
+  assert.equal(fromCart.nextCartOpen, false);
+  assert.deepEqual(fromCart.nextRoute, { view: 'product', productId: 'chair-1' });
+
+  // 2. Home Travel tab steps back to Shopping tab instead of exiting
+  const fromTravel = resolveBackStep({
+    currentRoute: { view: 'home' },
+    stack: [{ view: 'home' }],
+    cartOpen: false,
+    homePortal: 'travel',
+    checkoutOrigin: 'pdp',
+  });
+  assert.equal(fromTravel.handled, true);
+  assert.equal(fromTravel.nextHomePortal, 'shop');
+  assert.deepEqual(fromTravel.nextRoute, { view: 'home' });
+
+  // 3. Address opened from Cart returns cleanly to Home
+  const fromCartAddress = resolveBackStep({
+    currentRoute: { view: 'checkout', step: 'address' },
+    stack: [{ view: 'home' }, { view: 'checkout', step: 'address' }],
+    cartOpen: false,
+    homePortal: 'shop',
+    checkoutOrigin: 'cart',
+    lastProductId: 'chair-1',
+  });
+  assert.equal(fromCartAddress.handled, true);
+  assert.deepEqual(fromCartAddress.nextRoute, { view: 'home' });
+
+  // 4. Plain Home root marks handled: false
+  const atHome = resolveBackStep({
+    currentRoute: { view: 'home' },
+    stack: [{ view: 'home' }],
+    cartOpen: false,
+    homePortal: 'shop',
+    checkoutOrigin: 'pdp',
+  });
+  assert.equal(atHome.handled, false);
+});
+
