@@ -1,15 +1,57 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
+import { transform as transformLightningCss } from 'lightningcss';
 import path from 'path';
 import {defineConfig} from 'vite';
+import {makeCssLegacyCompatible} from './src/utils/cssCompat';
 
 export default defineConfig(() => {
   return {
     base: './',
+    build: {
+      target: 'chrome80',
+      cssTarget: 'chrome80',
+    },
     plugins: [
       react(),
       tailwindcss(),
+      // Downlevel Tailwind v4 CSS (@layer, oklch, CSS nesting, @property guards)
+      // so both modern browsers and older Android Chrome render full styling.
+      {
+        name: 'compat-legacy-css',
+        apply: 'build',
+        enforce: 'post',
+        generateBundle(_options, bundle) {
+          for (const [fileName, chunk] of Object.entries(bundle)) {
+            if (fileName.endsWith('.css') && chunk.type === 'asset') {
+              const rawCss =
+                typeof chunk.source === 'string'
+                  ? chunk.source
+                  : Buffer.from(chunk.source).toString('utf8');
+              const unlayered = makeCssLegacyCompatible(rawCss);
+              const downleveled = transformLightningCss({
+                filename: fileName,
+                code: Buffer.from(unlayered, 'utf8'),
+                minify: true,
+                targets: {
+                  chrome: 80 << 16,
+                  safari: 13 << 16,
+                },
+              });
+              chunk.source = makeCssLegacyCompatible(
+                Buffer.from(downleveled.code).toString('utf8'),
+              );
+            }
+          }
+        },
+        transformIndexHtml(html) {
+          return html.replace(
+            /<link\s+rel="stylesheet"\s+crossorigin\s+href=/gi,
+            '<link rel="stylesheet" href=',
+          );
+        },
+      },
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
       // in production builds. Do not remove.
