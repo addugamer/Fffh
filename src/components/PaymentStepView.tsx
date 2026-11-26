@@ -1,18 +1,27 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
+import { Loader2, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import type { PriceBreakdown } from '../types/store';
+import { resolveAssetUrl } from '../utils/assets';
 import { formatINR, launchUpiPayment } from '../utils/commerce';
 
 export type QuickUpiApp = 'phonepe' | 'paytm';
+export type PaymentVerificationPhase = 'idle' | 'awaiting_app' | 'verifying';
 
 interface PaymentStepViewProps {
   pricing: PriceBreakdown;
   selectedApp: QuickUpiApp;
-  isProcessing: boolean;
+  paymentPhase: PaymentVerificationPhase;
+  quickReturnNotice: boolean;
   onSelectApp: (app: QuickUpiApp) => void;
   onSubmitPay: (e: FormEvent) => void;
+  onRetryUpiApp: () => void;
+  onManualConfirmPaid: () => void;
+  onCancelPaymentPending: () => void;
 }
 
 const INITIAL_OFFER_SECONDS = 11 * 60 + 23; // 11min 23sec
+const PHONEPE_LOGO_PATH = '/assets/aistudio/phonpe_logo_d46f7868.webp';
+const PAYTM_LOGO_PATH = '/assets/aistudio/paytm_logo_7ea3b11b.webp';
 
 function formatOfferTimer(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds));
@@ -21,67 +30,85 @@ function formatOfferTimer(totalSeconds: number): string {
   return `${String(mins).padStart(2, '0')}min ${String(secs).padStart(2, '0')}sec`;
 }
 
-function PhonePeSquareBadge() {
+function PhonePeSquareBadge({ className = 'w-11 h-11' }: { className?: string }) {
+  const src = resolveAssetUrl(PHONEPE_LOGO_PATH, import.meta.env.BASE_URL);
   return (
-    <span className="w-10 h-10 rounded-[4px] bg-[#5F259F] inline-flex items-center justify-center shrink-0">
-      <svg viewBox="0 0 32 32" className="w-7 h-7" fill="none" aria-hidden="true">
-        <path
-          d="M9.5 11.5H22.5M18 11.5V23M12.5 11.5V16.8C12.5 18.6 14.1 19.8 16.2 19.2L18 18.7"
-          stroke="#FFFFFF"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M14.5 7.5C15.8 8.7 17.5 10.2 18.5 11.5"
-          stroke="#FFFFFF"
-          strokeWidth="2.3"
-          strokeLinecap="round"
-        />
-      </svg>
+    <span
+      className={`${className} rounded-[10px] overflow-hidden inline-flex items-center justify-center shrink-0 bg-[#5F259F] shadow-[0_1px_3px_rgba(95,37,159,0.28)] no-touch-callout`}
+    >
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        onContextMenu={(e) => e.preventDefault()}
+        className="w-full h-full object-cover scale-[1.06] pointer-events-none select-none"
+      />
     </span>
   );
 }
 
-function PhonePeCircleMark({ className = 'w-5 h-5' }: { className?: string }) {
+function PhonePeCircleMark({ className = 'w-6 h-6' }: { className?: string }) {
+  const src = resolveAssetUrl(PHONEPE_LOGO_PATH, import.meta.env.BASE_URL);
   return (
-    <svg viewBox="0 0 32 32" className={className} fill="none" aria-hidden="true">
-      <circle cx="16" cy="16" r="15" fill="#5F259F" />
-      <path
-        d="M10.5 12H21.5M18 12V22.5M13 12V16.8C13 18.3 14.4 19.3 16.3 18.8L18 18.3"
-        stroke="#FFFFFF"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+    <span
+      className={`${className} rounded-full overflow-hidden inline-flex items-center justify-center shrink-0 bg-[#5F259F] no-touch-callout`}
+    >
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        onContextMenu={(e) => e.preventDefault()}
+        className="w-full h-full object-cover scale-[1.06] pointer-events-none select-none"
       />
-      <path
-        d="M14.5 8.5C15.8 9.6 17.2 10.8 18.2 12"
-        stroke="#FFFFFF"
-        strokeWidth="2.1"
-        strokeLinecap="round"
-      />
+    </span>
+  );
+}
+
+/**
+ * Paytm wordmark SVG ("pay" navy #002970 + "tm" cyan #00BAF2) for footer partner strip.
+ */
+function PaytmWordmarkSvg({ className = 'w-14 h-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 92 26" className={className} fill="none" aria-hidden="true">
+      <text
+        x="46"
+        y="19"
+        textAnchor="middle"
+        fontFamily="'Plus Jakarta Sans', 'DM Sans', Arial, sans-serif"
+        fontSize="19"
+        fontWeight="800"
+        letterSpacing="-0.7"
+      >
+        <tspan fill="#002970">pay</tspan>
+        <tspan fill="#00BAF2">tm</tspan>
+      </text>
     </svg>
   );
 }
 
-function PaytmSquareBadge() {
+function PaytmSquareBadge({ className = 'w-11 h-11' }: { className?: string }) {
+  const src = resolveAssetUrl(PAYTM_LOGO_PATH, import.meta.env.BASE_URL);
   return (
-    <span className="w-10 h-10 rounded-[4px] overflow-hidden border border-[#E5E7EB] relative inline-flex items-center justify-center shrink-0 bg-white">
-      <span className="absolute inset-x-0 top-0 h-1/2 bg-[#00BAF2]" aria-hidden="true" />
-      <span className="absolute inset-x-0 bottom-0 h-1/2 bg-[#002970]" aria-hidden="true" />
-      <span className="relative z-10 w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-xs">
-        <span className="font-display text-[9px] font-extrabold tracking-tight leading-none">
-          <span className="text-[#002970]">pay</span>
-          <span className="text-[#00BAF2]">tm</span>
-        </span>
-      </span>
+    <span
+      className={`${className} rounded-[10px] overflow-hidden inline-flex items-center justify-center shrink-0 bg-[#002970] shadow-[0_1px_2px_rgba(15,23,42,0.12)] no-touch-callout`}
+    >
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        onContextMenu={(e) => e.preventDefault()}
+        className="w-full h-full object-cover scale-[1.06] pointer-events-none select-none"
+      />
     </span>
   );
 }
 
 function CodMutedIcon() {
   return (
-    <span className="w-10 h-10 inline-flex flex-col items-center justify-center shrink-0 text-[#6B7280]">
+    <span className="w-11 h-11 inline-flex flex-col items-center justify-center shrink-0 text-[#6B7280]">
       <svg viewBox="0 0 32 22" className="w-8 h-5" fill="none" aria-hidden="true">
         <rect
           x="1.5"
@@ -94,7 +121,12 @@ function CodMutedIcon() {
           fill="#F9FAFB"
         />
         <circle cx="16" cy="11" r="4" stroke="#9CA3AF" strokeWidth="1.6" />
-        <path d="M5.5 6.5H7.5M24.5 15.5H26.5" stroke="#9CA3AF" strokeWidth="1.6" strokeLinecap="round" />
+        <path
+          d="M5.5 6.5H7.5M24.5 15.5H26.5"
+          stroke="#9CA3AF"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
       </svg>
       <span className="text-[11px] font-semibold tracking-wide text-[#4B5563] leading-none mt-0.5">
         COD
@@ -106,9 +138,13 @@ function CodMutedIcon() {
 export function PaymentStepView({
   pricing,
   selectedApp,
-  isProcessing,
+  paymentPhase,
+  quickReturnNotice,
   onSelectApp,
   onSubmitPay,
+  onRetryUpiApp,
+  onManualConfirmPaid,
+  onCancelPaymentPending,
 }: PaymentStepViewProps) {
   const [offerSeconds, setOfferSeconds] = useState(INITIAL_OFFER_SECONDS);
 
@@ -124,9 +160,16 @@ export function PaymentStepView({
   };
 
   const handleFormSubmit = (e: FormEvent) => {
+    if (paymentPhase !== 'idle') {
+      e.preventDefault();
+      return;
+    }
     launchUpiPayment(selectedApp, pricing.grandTotal);
     onSubmitPay(e);
   };
+
+  const appDisplayName = selectedApp === 'phonepe' ? 'PhonePe' : 'Paytm';
+  const isPendingOverlayOpen = paymentPhase !== 'idle';
 
   return (
     <main className="flex-1 bg-[#F1F3F6] pb-[84px]">
@@ -146,8 +189,8 @@ export function PaymentStepView({
 
             <div className="relative z-10 w-full flex items-center justify-between px-3 sm:px-6">
               {/* Left Brand Mark */}
-              <div className="flex items-center gap-1.5 w-[39%] shrink-0">
-                <PhonePeCircleMark className="w-7 h-7 sm:w-9 sm:h-9 shrink-0" />
+              <div className="flex items-center gap-2 w-[39%] shrink-0">
+                <PhonePeCircleMark className="w-8 h-8 sm:w-9 sm:h-9 shrink-0" />
                 <span className="font-display text-[17px] sm:text-[21px] font-bold text-[#4A148C] tracking-tight">
                   PhonePe
                 </span>
@@ -189,7 +232,7 @@ export function PaymentStepView({
           className="mt-2.5 bg-white px-4 py-4 space-y-3 no-touch-callout"
           role="radiogroup"
         >
-          {/* PhonePe Option — protected button control without exposed href/UPI in DOM */}
+          {/* PhonePe Option */}
           <button
             type="button"
             role="radio"
@@ -216,7 +259,7 @@ export function PaymentStepView({
             <span className="text-[16px] font-medium text-[#111827]">PhonePe</span>
           </button>
 
-          {/* Paytm Option — protected button control without exposed href/UPI in DOM */}
+          {/* Paytm Option */}
           <button
             type="button"
             role="radio"
@@ -403,10 +446,7 @@ export function PaymentStepView({
 
             <span className="h-4 w-[1.5px] bg-[#111827]" aria-hidden="true" />
 
-            <span className="font-display text-[16px] font-extrabold tracking-tight leading-none">
-              <span className="text-[#002970]">pay</span>
-              <span className="text-[#00BAF2]">tm</span>
-            </span>
+            <PaytmWordmarkSvg className="w-[54px] h-5" />
 
             <span className="h-4 w-[1.5px] bg-[#111827]" aria-hidden="true" />
 
@@ -437,16 +477,126 @@ export function PaymentStepView({
             </div>
             <button
               type="submit"
-              disabled={isProcessing}
+              disabled={isPendingOverlayOpen}
               onContextMenu={preventLongPressMenu}
               data-testid="payment-pay-button"
               className="min-w-[155px] sm:min-w-[190px] h-[44px] bg-[#FFC200] hover:bg-[#F4B800] active:bg-[#EAB308] disabled:opacity-60 text-[#111827] font-semibold text-[16px] rounded-[4px] transition-colors cursor-pointer no-touch-callout"
             >
-              {isProcessing ? 'Processing...' : 'Pay'}
+              {paymentPhase === 'verifying'
+                ? 'Verifying...'
+                : paymentPhase === 'awaiting_app'
+                  ? 'Awaiting Payment...'
+                  : 'Pay'}
             </button>
           </div>
         </div>
       </form>
+
+      {/* Pending UPI Payment Verification Sheet — blocks premature Order Success until payment finishes */}
+      {isPendingOverlayOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="upi-pending-title"
+          data-testid="upi-pending-modal"
+          className="fixed inset-0 z-50 bg-black/55 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div className="w-full sm:max-w-md bg-white rounded-t-[16px] sm:rounded-[14px] p-5 pb-6 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {selectedApp === 'phonepe' ? (
+                  <PhonePeSquareBadge className="w-11 h-11" />
+                ) : (
+                  <PaytmSquareBadge className="w-11 h-11" />
+                )}
+                <div>
+                  <h2
+                    id="upi-pending-title"
+                    className="text-[17px] font-bold text-[#111827] leading-snug"
+                  >
+                    {paymentPhase === 'verifying'
+                      ? `Verifying ${appDisplayName} payment...`
+                      : `Complete payment in ${appDisplayName}`}
+                  </h2>
+                  <p className="text-[13.5px] font-semibold text-[#2874F0] tabular-nums mt-0.5">
+                    Payable Amount: {formatINR(pricing.grandTotal)}
+                  </p>
+                </div>
+              </div>
+              {paymentPhase === 'awaiting_app' && (
+                <button
+                  type="button"
+                  onClick={onCancelPaymentPending}
+                  aria-label="Cancel payment verification"
+                  className="w-8 h-8 rounded-full inline-flex items-center justify-center text-[#6B7280] hover:bg-[#F3F4F6] cursor-pointer"
+                >
+                  <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-[10px] bg-[#F8FAFC] border border-[#E2E8F0] px-4 py-3.5 flex items-center gap-3">
+              <Loader2
+                className="w-5 h-5 text-[#2874F0] animate-spin shrink-0"
+                aria-hidden="true"
+              />
+              <p className="text-[13.5px] text-[#334155] leading-snug">
+                {paymentPhase === 'verifying'
+                  ? 'Confirming your payment status. Please do not press back...'
+                  : `Approve the payment request inside your ${appDisplayName} app and return to this screen.`}
+              </p>
+            </div>
+
+            {quickReturnNotice && paymentPhase === 'awaiting_app' && (
+              <p
+                data-testid="upi-quick-return-notice"
+                className="mt-3 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] px-3.5 py-2.5 text-[12.5px] font-medium text-[#92400E] leading-snug"
+              >
+                You returned before payment completed. Please finish the payment in {appDisplayName}, or tap confirm below once paid.
+              </p>
+            )}
+
+            {paymentPhase === 'awaiting_app' && (
+              <div className="mt-4 space-y-2.5">
+                <button
+                  type="button"
+                  onClick={onRetryUpiApp}
+                  onContextMenu={preventLongPressMenu}
+                  data-testid="upi-retry-app-button"
+                  className="w-full h-[44px] rounded-[6px] bg-[#2874F0] hover:bg-[#1E60D5] text-white font-semibold text-[14.5px] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer no-touch-callout"
+                >
+                  <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                  <span>Open {appDisplayName} App</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onManualConfirmPaid}
+                  onContextMenu={preventLongPressMenu}
+                  data-testid="upi-confirm-paid-button"
+                  className="w-full h-[44px] rounded-[6px] bg-[#FFC200] hover:bg-[#F4B800] text-[#111827] font-semibold text-[14.5px] transition-colors cursor-pointer no-touch-callout"
+                >
+                  I have completed payment
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onCancelPaymentPending}
+                  data-testid="upi-cancel-pending-button"
+                  className="w-full py-2 text-[13.5px] font-medium text-[#4B5563] hover:text-[#111827] transition-colors cursor-pointer"
+                >
+                  Cancel & change payment method
+                </button>
+              </div>
+            )}
+
+            <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-center justify-center gap-1.5 text-[12px] text-[#64748B]">
+              <ShieldCheck className="w-4 h-4 text-[#16A34A]" aria-hidden="true" />
+              <span>Order confirms only after payment completion</span>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

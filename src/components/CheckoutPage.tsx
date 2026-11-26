@@ -15,12 +15,18 @@ import type {
 import {
   calculateDiscountPercent,
   checkPincodeDelivery,
+  evaluateUpiAppReturn,
   formatFullDeliveryDate,
   formatINR,
   generateOrderId,
+  launchUpiPayment,
   validateAddress,
 } from '../utils/commerce';
-import { PaymentStepView, type QuickUpiApp } from './PaymentStepView';
+import {
+  PaymentStepView,
+  type PaymentVerificationPhase,
+  type QuickUpiApp,
+} from './PaymentStepView';
 import { SmartImage } from './SmartImage';
 import { AssuredBadge } from './StoreIcons';
 
@@ -96,8 +102,11 @@ export function CheckoutPage({
   const [addressErrors, setAddressErrors] = useState<Record<string, string>>({});
 
   const [selectedUpiApp, setSelectedUpiApp] = useState<QuickUpiApp>('phonepe');
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentPhase, setPaymentPhase] = useState<PaymentVerificationPhase>('idle');
+  const [quickReturnNotice, setQuickReturnNotice] = useState(false);
   const payTimerRef = useRef<number | null>(null);
+  const leftForUpiAppRef = useRef<boolean>(false);
+  const hiddenAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     setAddress(initialAddress);
@@ -110,6 +119,15 @@ export function CheckoutPage({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (step !== 3) {
+      setPaymentPhase('idle');
+      setQuickReturnNotice(false);
+      leftForUpiAppRef.current = false;
+      hiddenAtRef.current = null;
+    }
+  }, [step]);
 
   useEffect(() => {
     if (step > 1 && Object.keys(validateAddress(address)).length > 0) {
@@ -131,11 +149,12 @@ export function CheckoutPage({
     }
   };
 
-  const handlePayNow = (e: FormEvent) => {
-    e.preventDefault();
-    if (isProcessing) return;
+  const finalizeConfirmedOrder = () => {
+    if (payTimerRef.current !== null) {
+      window.clearTimeout(payTimerRef.current);
+    }
     onPrepareOrderSuccess?.();
-    setIsProcessing(true);
+    setPaymentPhase('verifying');
     payTimerRef.current = window.setTimeout(() => {
       payTimerRef.current = null;
       const pinCheck = checkPincodeDelivery(address.pincode);
@@ -160,10 +179,86 @@ export function CheckoutPage({
         pricing: { ...pricing },
       };
 
-      setIsProcessing(false);
+      setPaymentPhase('idle');
+      setQuickReturnNotice(false);
       onOrderComplete(newOrder);
       window.scrollTo(0, 0);
-    }, 650);
+    }, 800);
+  };
+
+  useEffect(() => {
+    if (paymentPhase !== 'awaiting_app') return;
+
+    const markLeftForApp = () => {
+      leftForUpiAppRef.current = true;
+      if (hiddenAtRef.current === null) {
+        hiddenAtRef.current = Date.now();
+      }
+    };
+
+    const checkAppReturn = () => {
+      if (document.visibilityState !== 'visible' || !leftForUpiAppRef.current) {
+        return;
+      }
+      const awayDurationMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+      leftForUpiAppRef.current = false;
+      hiddenAtRef.current = null;
+
+      const decision = evaluateUpiAppReturn({
+        hasLeftApp: true,
+        awayDurationMs,
+      });
+
+      if (decision === 'verify_and_complete') {
+        finalizeConfirmedOrder();
+      } else {
+        setQuickReturnNotice(true);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        markLeftForApp();
+      } else {
+        checkAppReturn();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', markLeftForApp);
+    window.addEventListener('pagehide', markLeftForApp);
+    window.addEventListener('focus', checkAppReturn);
+    window.addEventListener('pageshow', checkAppReturn);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', markLeftForApp);
+      window.removeEventListener('pagehide', markLeftForApp);
+      window.removeEventListener('focus', checkAppReturn);
+      window.removeEventListener('pageshow', checkAppReturn);
+    };
+  });
+
+  const handlePayNow = (e: FormEvent) => {
+    e.preventDefault();
+    if (paymentPhase !== 'idle') return;
+    leftForUpiAppRef.current = false;
+    hiddenAtRef.current = null;
+    setQuickReturnNotice(false);
+    setPaymentPhase('awaiting_app');
+  };
+
+  const handleRetryUpiApp = () => {
+    setQuickReturnNotice(false);
+    launchUpiPayment(selectedUpiApp, pricing.grandTotal);
+  };
+
+  const handleCancelPaymentPending = () => {
+    if (paymentPhase === 'verifying') return;
+    leftForUpiAppRef.current = false;
+    hiddenAtRef.current = null;
+    setQuickReturnNotice(false);
+    setPaymentPhase('idle');
   };
 
   // Guard empty cart on checkout
@@ -186,6 +281,13 @@ export function CheckoutPage({
   }
 
   const handleHeaderBack = () => {
+    if (step === 3 && paymentPhase === 'awaiting_app') {
+      handleCancelPaymentPending();
+      return;
+    }
+    if (step === 3 && paymentPhase === 'verifying') {
+      return;
+    }
     onBack();
   };
 
@@ -683,9 +785,13 @@ export function CheckoutPage({
         <PaymentStepView
           pricing={pricing}
           selectedApp={selectedUpiApp}
-          isProcessing={isProcessing}
+          paymentPhase={paymentPhase}
+          quickReturnNotice={quickReturnNotice}
           onSelectApp={setSelectedUpiApp}
           onSubmitPay={handlePayNow}
+          onRetryUpiApp={handleRetryUpiApp}
+          onManualConfirmPaid={finalizeConfirmedOrder}
+          onCancelPaymentPending={handleCancelPaymentPending}
         />
       )}
     </div>

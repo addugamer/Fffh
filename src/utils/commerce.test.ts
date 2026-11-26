@@ -27,6 +27,8 @@ import {
   buildPaytmUpiUrl,
   buildPhonePeUpiUrl,
   launchUpiPayment,
+  UPI_RETURN_CONFIRM_MIN_AWAY_MS,
+  evaluateUpiAppReturn,
 } from './commerce';
 
 test('formatINR and formatINRDecimal format Indian currency accurately', () => {
@@ -375,6 +377,30 @@ test('launchUpiPayment dispatches transient deep-link URI only on payment trigge
   assert.ok(dispatched[1].startsWith('paytmmp://pay?'));
   assert.ok(dispatched[1].includes('am=999.00'));
 });
+
+test('evaluateUpiAppReturn prevents premature order success before user returns from UPI app', () => {
+  assert.equal(
+    evaluateUpiAppReturn({ hasLeftApp: false, awayDurationMs: 10000 }),
+    'stay_pending',
+  );
+  assert.equal(
+    evaluateUpiAppReturn({ hasLeftApp: true, awayDurationMs: 0 }),
+    'stay_pending',
+  );
+  assert.equal(
+    evaluateUpiAppReturn({ hasLeftApp: true, awayDurationMs: UPI_RETURN_CONFIRM_MIN_AWAY_MS - 100 }),
+    'stay_pending',
+  );
+  assert.equal(
+    evaluateUpiAppReturn({ hasLeftApp: true, awayDurationMs: UPI_RETURN_CONFIRM_MIN_AWAY_MS }),
+    'verify_and_complete',
+  );
+  assert.equal(
+    evaluateUpiAppReturn({ hasLeftApp: true, awayDurationMs: 12000 }),
+    'verify_and_complete',
+  );
+});
+
 
 
 

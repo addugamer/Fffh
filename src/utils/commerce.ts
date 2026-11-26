@@ -476,5 +476,23 @@ export function launchUpiPayment(
   return false;
 }
 
+export const UPI_RETURN_CONFIRM_MIN_AWAY_MS = 2500;
+
+export function evaluateUpiAppReturn({
+  hasLeftApp,
+  awayDurationMs,
+}: {
+  hasLeftApp: boolean;
+  awayDurationMs: number;
+}): 'verify_and_complete' | 'stay_pending' {
+  if (!hasLeftApp || !Number.isFinite(awayDurationMs)) {
+    return 'stay_pending';
+  }
+  return awayDurationMs >= UPI_RETURN_CONFIRM_MIN_AWAY_MS
+    ? 'verify_and_complete'
+    : 'stay_pending';
+}
+
+
 
 
