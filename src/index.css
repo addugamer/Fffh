@@ -37,6 +37,13 @@
   scrollbar-width: none;
 }
 
+.no-touch-callout {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
 @keyframes orderTickCirclePop {
   0% {
     opacity: 0;

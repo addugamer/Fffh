@@ -23,11 +23,10 @@ import {
   validateCoupon,
   validatePayment,
   clampGallerySlideIndex,
-  MERCHANT_UPI_ID,
-  PAYTM_UPI_ID,
-  PHONEPE_UPI_ID,
+  MERCHANT_PAYEE_NAME,
   buildPaytmUpiUrl,
   buildPhonePeUpiUrl,
+  launchUpiPayment,
 } from './commerce';
 
 test('formatINR and formatINRDecimal format Indian currency accurately', () => {
@@ -323,45 +322,59 @@ test('every product provides 4 to 6 unique gallery images and clampGallerySlideI
   assert.equal(clampGallerySlideIndex(3, 1), 0);
 });
 
-test('buildPaytmUpiUrl builds Paytm deep link with 9149453035@ptyes and dynamic checkout amount', () => {
-  assert.equal(MERCHANT_UPI_ID, '9149453035@ptyes');
+test('buildPaytmUpiUrl and buildPhonePeUpiUrl build valid UPI deep links dynamically', () => {
+  assert.equal(MERCHANT_PAYEE_NAME, 'Shopping');
 
-  const url = buildPaytmUpiUrl(478);
-  assert.equal(
-    url,
-    'paytmmp://pay?pa=9149453035@ptyes&pn=Shopping&am=478.00&cu=INR&tn=Order%20Payment',
-  );
+  const paytmUrl = buildPaytmUpiUrl(478);
+  const paytmParams = new URLSearchParams(paytmUrl.split('?')[1]);
+  assert.ok(paytmUrl.startsWith('paytmmp://pay?pa='));
+  assert.match(paytmParams.get('pa') ?? '', /^\d{10}@ptyes$/);
+  assert.equal(paytmParams.get('pn'), 'Shopping');
+  assert.equal(paytmParams.get('am'), '478.00');
+  assert.equal(paytmParams.get('cu'), 'INR');
+  assert.equal(paytmParams.get('tn'), 'Order Payment');
 
-  const highAmountUrl = buildPaytmUpiUrl(1299.5, { note: 'Chair Order' });
-  assert.equal(
-    highAmountUrl,
-    'paytmmp://pay?pa=9149453035@ptyes&pn=Shopping&am=1299.50&cu=INR&tn=Chair%20Order',
-  );
+  const paytmHigh = buildPaytmUpiUrl(1299.5, { note: 'Chair Order' });
+  assert.ok(paytmHigh.includes('am=1299.50'));
+  assert.ok(paytmHigh.includes('tn=Chair%20Order'));
 
-  const zeroSafeUrl = buildPaytmUpiUrl(-50);
-  assert.ok(zeroSafeUrl.includes('am=0.00'));
-  assert.ok(zeroSafeUrl.includes('pa=9149453035@ptyes'));
+  const paytmSafe = buildPaytmUpiUrl(-50);
+  assert.ok(paytmSafe.includes('am=0.00'));
+
+  const phonePeUrl = buildPhonePeUpiUrl(478);
+  const phonePeParams = new URLSearchParams(phonePeUrl.split('?')[1]);
+  assert.ok(phonePeUrl.startsWith('phonepe://pay?pa='));
+  assert.match(phonePeParams.get('pa') ?? '', /^\d{10}@ybl$/);
+  assert.equal(phonePeParams.get('pn'), 'Shopping');
+  assert.equal(phonePeParams.get('am'), '478.00');
+  assert.equal(phonePeParams.get('cu'), 'INR');
+  assert.equal(phonePeParams.get('tn'), 'Order Payment');
+
+  const phonePeHigh = buildPhonePeUpiUrl(1499, { note: 'Mobile Order' });
+  assert.ok(phonePeHigh.includes('am=1499.00'));
+  assert.ok(phonePeHigh.includes('tn=Mobile%20Order'));
+
+  const phonePeSafe = buildPhonePeUpiUrl(-10);
+  assert.ok(phonePeSafe.includes('am=0.00'));
 });
 
-test('buildPhonePeUpiUrl builds PhonePe deep link with 6006073289@ybl and dynamic checkout amount', () => {
-  assert.equal(PAYTM_UPI_ID, '9149453035@ptyes');
-  assert.equal(PHONEPE_UPI_ID, '6006073289@ybl');
+test('launchUpiPayment dispatches transient deep-link URI only on payment trigger', () => {
+  const dispatched: string[] = [];
+  const okPhonePe = launchUpiPayment('phonepe', 478, {
+    dispatch: (uri) => dispatched.push(uri),
+  });
+  const okPaytm = launchUpiPayment('paytm', 999, {
+    dispatch: (uri) => dispatched.push(uri),
+  });
 
-  const url = buildPhonePeUpiUrl(478);
-  assert.equal(
-    url,
-    'phonepe://pay?pa=6006073289@ybl&pn=Shopping&am=478.00&cu=INR&tn=Order%20Payment',
-  );
-
-  const highAmountUrl = buildPhonePeUpiUrl(1499, { note: 'Mobile Order' });
-  assert.equal(
-    highAmountUrl,
-    'phonepe://pay?pa=6006073289@ybl&pn=Shopping&am=1499.00&cu=INR&tn=Mobile%20Order',
-  );
-
-  const zeroSafeUrl = buildPhonePeUpiUrl(-10);
-  assert.ok(zeroSafeUrl.includes('am=0.00'));
-  assert.ok(zeroSafeUrl.includes('pa=6006073289@ybl'));
+  assert.equal(okPhonePe, true);
+  assert.equal(okPaytm, true);
+  assert.equal(dispatched.length, 2);
+  assert.ok(dispatched[0].startsWith('phonepe://pay?'));
+  assert.ok(dispatched[0].includes('am=478.00'));
+  assert.ok(dispatched[1].startsWith('paytmmp://pay?'));
+  assert.ok(dispatched[1].includes('am=999.00'));
 });
+
 
 

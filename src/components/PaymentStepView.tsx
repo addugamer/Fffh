@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type MouseEvent } from 'react';
 import type { PriceBreakdown } from '../types/store';
-import { buildPaytmUpiUrl, buildPhonePeUpiUrl, formatINR } from '../utils/commerce';
+import { formatINR, launchUpiPayment } from '../utils/commerce';
 
 export type QuickUpiApp = 'phonepe' | 'paytm';
 
@@ -111,10 +111,6 @@ export function PaymentStepView({
   onSubmitPay,
 }: PaymentStepViewProps) {
   const [offerSeconds, setOfferSeconds] = useState(INITIAL_OFFER_SECONDS);
-  const paytmAnchorRef = useRef<HTMLAnchorElement>(null);
-  const phonePeAnchorRef = useRef<HTMLAnchorElement>(null);
-  const paytmUrl = buildPaytmUpiUrl(pricing.grandTotal);
-  const phonePeUrl = buildPhonePeUpiUrl(pricing.grandTotal);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -123,37 +119,17 @@ export function PaymentStepView({
     return () => window.clearInterval(timer);
   }, []);
 
+  const preventLongPressMenu = (e: MouseEvent) => {
+    e.preventDefault();
+  };
+
   const handleFormSubmit = (e: FormEvent) => {
-    if (selectedApp === 'paytm') {
-      paytmAnchorRef.current?.click();
-    } else if (selectedApp === 'phonepe') {
-      phonePeAnchorRef.current?.click();
-    }
+    launchUpiPayment(selectedApp, pricing.grandTotal);
     onSubmitPay(e);
   };
 
   return (
     <main className="flex-1 bg-[#F1F3F6] pb-[84px]">
-      <a
-        ref={phonePeAnchorRef}
-        href={phonePeUrl}
-        data-testid="phonepe-deeplink-anchor"
-        tabIndex={-1}
-        aria-hidden="true"
-        className="sr-only"
-      >
-        Open PhonePe
-      </a>
-      <a
-        ref={paytmAnchorRef}
-        href={paytmUrl}
-        data-testid="paytm-deeplink-anchor"
-        tabIndex={-1}
-        aria-hidden="true"
-        className="sr-only"
-      >
-        Open Paytm
-      </a>
       <form onSubmit={handleFormSubmit} noValidate className="max-w-2xl mx-auto">
         {/* Promotional PhonePe Cashback Banner */}
         <section aria-label="UPI cashback offer" className="bg-white">
@@ -209,17 +185,19 @@ export function PaymentStepView({
         {/* Payment Method Radio Cards */}
         <section
           aria-label="Payment methods"
-          className="mt-2.5 bg-white px-4 py-4 space-y-3"
+          onContextMenu={preventLongPressMenu}
+          className="mt-2.5 bg-white px-4 py-4 space-y-3 no-touch-callout"
           role="radiogroup"
         >
-          {/* PhonePe Option — direct deep link to PhonePe app with 6006073289@ybl & checkout amount */}
-          <a
-            href={phonePeUrl}
+          {/* PhonePe Option — protected button control without exposed href/UPI in DOM */}
+          <button
+            type="button"
             role="radio"
             aria-checked={selectedApp === 'phonepe'}
             onClick={() => onSelectApp('phonepe')}
+            onContextMenu={preventLongPressMenu}
             data-testid="payment-option-phonepe"
-            className={`w-full rounded-[8px] px-4 py-3.5 flex items-center gap-3.5 text-left transition-colors cursor-pointer no-underline ${
+            className={`w-full rounded-[8px] px-4 py-3.5 flex items-center gap-3.5 text-left cursor-pointer no-touch-callout ${
               selectedApp === 'phonepe'
                 ? 'border-[1.5px] border-[#2874F0] bg-white'
                 : 'border border-[#E5E7EB] bg-white hover:border-[#CBD5E1]'
@@ -236,16 +214,17 @@ export function PaymentStepView({
             </span>
             <PhonePeSquareBadge />
             <span className="text-[16px] font-medium text-[#111827]">PhonePe</span>
-          </a>
+          </button>
 
-          {/* Paytm Option — direct deep link to Paytm app with 9149453035@ptyes & checkout amount */}
-          <a
-            href={paytmUrl}
+          {/* Paytm Option — protected button control without exposed href/UPI in DOM */}
+          <button
+            type="button"
             role="radio"
             aria-checked={selectedApp === 'paytm'}
             onClick={() => onSelectApp('paytm')}
+            onContextMenu={preventLongPressMenu}
             data-testid="payment-option-paytm"
-            className={`w-full rounded-[8px] px-4 py-3.5 flex items-center gap-3.5 text-left transition-colors cursor-pointer no-underline ${
+            className={`w-full rounded-[8px] px-4 py-3.5 flex items-center gap-3.5 text-left cursor-pointer no-touch-callout ${
               selectedApp === 'paytm'
                 ? 'border-[1.5px] border-[#2874F0] bg-white'
                 : 'border border-[#E5E7EB] bg-white hover:border-[#CBD5E1]'
@@ -262,7 +241,7 @@ export function PaymentStepView({
             </span>
             <PaytmSquareBadge />
             <span className="text-[16px] font-medium text-[#111827]">Paytm</span>
-          </a>
+          </button>
 
           {/* Cash On Delivery (Disabled) */}
           <div
@@ -459,8 +438,9 @@ export function PaymentStepView({
             <button
               type="submit"
               disabled={isProcessing}
+              onContextMenu={preventLongPressMenu}
               data-testid="payment-pay-button"
-              className="min-w-[155px] sm:min-w-[190px] h-[44px] bg-[#FFC200] hover:bg-[#F4B800] active:bg-[#EAB308] disabled:opacity-60 text-[#111827] font-semibold text-[16px] rounded-[4px] transition-colors cursor-pointer"
+              className="min-w-[155px] sm:min-w-[190px] h-[44px] bg-[#FFC200] hover:bg-[#F4B800] active:bg-[#EAB308] disabled:opacity-60 text-[#111827] font-semibold text-[16px] rounded-[4px] transition-colors cursor-pointer no-touch-callout"
             >
               {isProcessing ? 'Processing...' : 'Pay'}
             </button>

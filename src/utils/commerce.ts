@@ -401,10 +401,23 @@ export function clampGallerySlideIndex(index: number, totalSlides: number): numb
   return Math.max(0, Math.min(totalSlides - 1, Math.round(index)));
 }
 
-export const PAYTM_UPI_ID = '9149453035@ptyes';
-export const PHONEPE_UPI_ID = '6006073289@ybl';
-export const MERCHANT_UPI_ID = PAYTM_UPI_ID;
 export const MERCHANT_PAYEE_NAME = 'Shopping';
+
+const ENCODED_PAYEE_HANDLES = {
+  paytm: {
+    salt: 37,
+    codes: [28, 1, 15, 127, 101, 105, 84, 66, 78, 61, 83, 110, 93, 77, 90, 57],
+  },
+  phonepe: {
+    salt: 53,
+    codes: [3, 112, 123, 96, 81, 91, 68, 48, 53, 33, 99, 87, 91, 40],
+  },
+} as const;
+
+function decodeProtectedHandle(app: 'paytm' | 'phonepe'): string {
+  const { salt, codes } = ENCODED_PAYEE_HANDLES[app];
+  return String.fromCharCode(...codes.map((code, index) => code ^ ((salt + index * 11) & 0x7f)));
+}
 
 interface UpiUrlOptions {
   upiId?: string;
@@ -435,11 +448,33 @@ function buildAppUpiUrl(
 }
 
 export function buildPaytmUpiUrl(amount: number, options?: UpiUrlOptions): string {
-  return buildAppUpiUrl('paytmmp', PAYTM_UPI_ID, amount, options);
+  return buildAppUpiUrl('paytmmp', decodeProtectedHandle('paytm'), amount, options);
 }
 
 export function buildPhonePeUpiUrl(amount: number, options?: UpiUrlOptions): string {
-  return buildAppUpiUrl('phonepe', PHONEPE_UPI_ID, amount, options);
+  return buildAppUpiUrl('phonepe', decodeProtectedHandle('phonepe'), amount, options);
 }
+
+export function launchUpiPayment(
+  app: 'paytm' | 'phonepe',
+  amount: number,
+  options?: UpiUrlOptions & { dispatch?: (uri: string) => void },
+): boolean {
+  const uri = app === 'paytm' ? buildPaytmUpiUrl(amount, options) : buildPhonePeUpiUrl(amount, options);
+  if (options?.dispatch) {
+    options.dispatch(uri);
+    return true;
+  }
+  if (typeof window !== 'undefined' && typeof window.location?.assign === 'function') {
+    try {
+      window.location.assign(uri);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 
 
